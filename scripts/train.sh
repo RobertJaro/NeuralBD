@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mlpc                      # Job name
+#SBATCH --job-name=nbd                     # Job name
 #SBATCH --partition=gpu                      # Queue name
 #SBATCH --nodes=1                            # Run all processes on a single node
 #SBATCH --ntasks=1                           # Run 1 task
