@@ -12,8 +12,9 @@ from tqdm import tqdm
 # 60 arcsec FOV - ref
 # step size of 30 arcsec --> overlap of 50%
 # pixel size of 1/20 arcsec --> 600 pixels
-base_path = '/home/fs71254/schirni/neural_stacking/run2'
+base_path = '/home/fs71254/schirni/neural_stacking/run8'
 data_path = '/gpfs/data/fs71254/schirni/Level1_Files/Level1_Files_GBand/hifi_20170618_082414_sd.fts'
+data_path2 = '/gpfs/data/fs71254/schirni/Level2_Files/Level2_Files_GBand/hifi_20170618_082414_sd_speckle.fts'
 os.makedirs(base_path, exist_ok=True)
 
 model_path = os.path.join(base_path, f'model.pt')
@@ -27,13 +28,22 @@ for i in range(0, 200):
 h, w = fits_array[0].shape
 fits_array = np.stack(fits_array, -1).reshape((h, w, 100, 2))
 
-#fits_array = fits_array[:, :, :]
+fits_array2 = []
+for i in range(0, 2):
+    fits_array2.append(fits.getdata(data_path2, i))
+fits_array2 = np.stack(fits_array2, -1)
+
+fits_array = fits_array[:, :, :]
 fits_array = fits_array[700:1212, 1200:1712, :, :]
-#fits_array = fits_array[70:2100, 70:2100, :, :]
+fits_array2 = fits_array2[700:1212, 1200:1712, :]
+#fits_array = fits_array[600:1624, 600:1624, :, :]
+#fits_array2 = fits_array2[600:1624, 600:1624, :]
 vmin, vmax = 0, np.percentile(fits_array, 99)
+vmin2, vmax2 = 0, np.percentile(fits_array2, 99)
 
 # positions = np.array(positions)
 images = fits_array / vmax
+fits_array2 = fits_array2 / vmax2
 
 
 ref_image = images[:, :, 0]
@@ -103,6 +113,7 @@ class ImageModel(nn.Module):
         self.layers = nn.ModuleList(lin)
         self.d_out = nn.Linear(dim, n_channels)
         self.activation = Sine()
+        self.out_activation = nn.Softplus()
 
     def forward(self, coords):
         x = self.activation(self.d_in(coords))
@@ -110,6 +121,7 @@ class ImageModel(nn.Module):
         for l in self.layers:
             x = self.activation(l(x))
         x = self.d_out(x)
+        x = self.out_activation(x)
         return x
 
 class PSFModel(nn.Module):
@@ -196,27 +208,63 @@ class PSFStackModel(nn.Module):
         self.n_images = n_images
         self.image_model = ImageModel(dim)
         self.psf_model = PSFModel(dim, n_images)
-        self.psf_width = nn.Parameter(torch.tensor(0.05, dtype=torch.float32), requires_grad=True)
 
     def get_transformed_images(self, coords):
         transformed_coords = self.transform_coords(coords)
         image_stack = torch.stack([model(transformed_coords[:, i]) for i, model in enumerate(self.image_models)], -2)
         return image_stack
 
+
     def get_images(self, coords):
-        n_random_sample = 500
-        random_sampling = torch.randn(coords.shape[0], n_random_sample, 2, device=coords.device) * self.psf_width
-        random_sampling_coords = coords[:, None, :] + random_sampling
+        #n_random_sample = 200
+        # r spacing
+        dr = 0.01
+        r_values = torch.arange(dr, 16 * dr, step=dr, dtype=torch.float32, device=coords.device)
+        # theta spacing
+        theta_values = torch.linspace(0, 2 * torch.pi, 32, dtype=torch.float32, device=coords.device)
+        dtheta = torch.diff(theta_values)[0]
+
+        # create mesh
+        theta, r = torch.meshgrid(theta_values, r_values, indexing='ij')
+
+        # compute area elements
+        area_elements = r * dr * dtheta
+
+        # convert to cartesian
+        x, y = r * torch.cos(theta), r * torch.sin(theta)
+        grid_sampling = torch.stack([x, y], -1).reshape(-1, 2)
+        area_elements = area_elements.reshape(-1, 1)
+
+        # add central point
+        central_point = torch.zeros(1, 2, device=coords.device)
+        central_area = torch.tensor(torch.pi * (dr / 2) ** 2, dtype=torch.float32, device=coords.device).reshape(1, 1)
+        grid_sampling = torch.concatenate([grid_sampling, central_point])
+        area_elements = torch.concatenate([area_elements, central_area])
+
+        grid_sampling = grid_sampling[None, :, :]
+        area_elements = area_elements[None, :, :]
+
+         #cartesian demo - TODO remove
+        #x_values = torch.linspace(-0.05, 0.05, 32, dtype=torch.float32, device=coords.device)
+        #y_values = torch.linspace(-0.05, 0.05, 32, dtype=torch.float32, device=coords.device)
+        #x, y = torch.meshgrid(x_values, y_values, indexing='ij')
+        #grid_sampling = torch.stack([x, y], -1).reshape(-1, 2)[None, :, :]
+        #area_elements = torch.ones_like(grid_sampling)[:, :, :1]
+
+
+        #random_sampling = torch.randn(coords.shape[0], n_random_sample, 2, device=coords.device) * self.psf_width
+        grid_sampling_coords = coords[:, None, :] + grid_sampling
         #
-        condition = (random_sampling_coords[..., 0] >= -1) & (random_sampling_coords[..., 0] <= 1) & \
-                    (random_sampling_coords[..., 1] >= -1) & (random_sampling_coords[..., 1] <= 1)
+        condition = (grid_sampling_coords[..., 0] >= -1) & (grid_sampling_coords[..., 0] <= 1) & \
+                    (grid_sampling_coords[..., 1] >= -1) & (grid_sampling_coords[..., 1] <= 1)
+        condition = condition[..., None]
         #
-        psf = self.psf_model(random_sampling.reshape(-1, 2))
-        psf = psf.reshape(coords.shape[0], n_random_sample, self.n_images)
-        psf = psf * condition[..., None]
-        sampling_image = self.image_model(random_sampling_coords.reshape(-1, 2))
-        sampling_image = sampling_image.reshape(coords.shape[0], n_random_sample, 2)
-        convolved_images = torch.einsum('bsc,bsn->bnc', sampling_image, psf) / torch.sum(condition, -1)[:, None, None]
+        psf = self.psf_model(grid_sampling.reshape(-1, 2))
+        psf = psf.reshape(-1, self.n_images)
+        psf = psf[None].repeat(coords.shape[0], 1, 1)
+        sampling_image = self.image_model(grid_sampling_coords.reshape(-1, 2))
+        sampling_image = sampling_image.reshape(coords.shape[0], -1, 2)
+        convolved_images = torch.einsum('bsc,bsn->bnc', sampling_image * area_elements * condition / torch.sum(condition, dim=1, keepdim=True), psf)
         image = self.image_model(coords)
         return image, convolved_images
 
@@ -237,7 +285,7 @@ loss_fn = torch.nn.MSELoss()
 
 # training
 epochs = 10000
-batch_size = 1024 * torch.cuda.device_count() if torch.cuda.is_available() else 1024
+batch_size = 2048 * torch.cuda.device_count() if torch.cuda.is_available() else 1024
 
 im_scaling = (images.shape[0] - 1) / 2
 im_shift = (images.shape[0] - 1) / 2
@@ -307,11 +355,23 @@ for epoch in range(epochs):
         output_image = np.concatenate(output_image, 0).reshape((*image_coordinates.shape[:-1], 2))
         output_convolved_image = np.concatenate(output_convolved_image, 0).reshape((*image_coordinates.shape[:-1], n_images, 2))
 
-        fig, axs = plt.subplots(2, 2, figsize=(6, 6))
-        axs[0, 0].imshow(output_image[..., 0], cmap='gray', vmin=0, origin='lower')
-        axs[0, 1].imshow(output_image[..., 1], cmap='gray', vmin=0, origin='lower')
-        axs[1, 0].imshow(output_convolved_image[..., 1, 0], cmap='gray', vmin=0, origin='lower')
-        axs[1, 1].imshow(output_convolved_image[..., 1, 1], cmap='gray', vmin=0, origin='lower')
+        fig, axs = plt.subplots(4, 2, figsize=(6, 6))
+        im = axs[0, 0].imshow(fits_array2[..., 0], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[0, 0])
+        im = axs[0, 1].imshow(fits_array2[..., 1], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[0, 1])
+        im = axs[1, 0].imshow(output_image[..., 0], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[1, 0])
+        im = axs[1, 1].imshow(output_image[..., 1], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[1, 1])
+        im = axs[2, 0].imshow(output_convolved_image[..., 1, 0], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[2, 0])
+        im = axs[2, 1].imshow(output_convolved_image[..., 1, 1], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[2, 1])
+        im = axs[3, 0].imshow(ref_image[..., 0], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[3, 0])
+        im = axs[3, 1].imshow(ref_image[..., 1], cmap='gray', vmin=0, origin='lower')
+        plt.colorbar(im, ax=axs[3, 1])
         plt.tight_layout()
         plt.savefig(os.path.join(base_path, f'images_{epoch + 1:04d}.jpg'), dpi=300)
         plt.close(fig)

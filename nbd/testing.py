@@ -80,3 +80,14 @@ for ax, img, title in zip(axes[1], [data1, data2, Sconj_S], ['data1', 'data2', '
 plt.savefig(os.path.join(base_path, 'i_o_s_data1_data2_sconj_s.jpg'))
 
 
+
+r = torch.linspace(0, 0.1, 16, dtype=torch.float32,)
+theta = torch.linspace(0, 2 * np.pi, 32, dtype=torch.float32)
+theta, r = torch.meshgrid(theta, r)
+x, y = r * torch.cos(theta), r * torch.sin(theta)
+
+#calculate the area of a single grid point in the polar coordinate system (r, theta)
+#area = 1/2 * r**2 * dtheta * dr
+area = 1/2 * r**2 * (2 * np.pi / 32) * (0.1 / 16)
+
+

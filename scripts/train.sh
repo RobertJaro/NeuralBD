@@ -1,14 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=nbd                     # Job name
-#SBATCH --partition=gpu                      # Queue name
-#SBATCH --nodes=1                            # Run all processes on a single node
-#SBATCH --ntasks=1                           # Run 1 task
-#SBATCH --cpus-per-task=32                   # Run 36 cores
-#SBATCH --mem=64000                          # Job memory request in Megabytes
-#SBATCH --gpus=4                             # Number of GPUs
-#SBATCH --time=24:00:00                      # Time limit hrs:min:sec or dd-hrs:min:sec
-#SBATCH --output=/gpfs/gpfs0/robert.jarolim/mlpc/logs/train_%j.log     # Standard output and error log
+#
+#
+#SBATCH -J neural_stacking                           #use -N only if you use both GPUs on the nodes, otherwise leave this line out
+#SBATCH --partition zen3_0512_a100x2
+#SBATCH --qos zen3_0512_a100x2
+#SBATCH --time=48:00:00
+#SBATCH --gres=gpu:1                   #or --gres=gpu:1 if you only want to use half a node
+#SBATCH --output=/home/fs71254/schirni/nstack/log%j.log     # Standard output and error log
 
-module load python/pytorch-1.6.0
-cd /beegfs/home/robert.jarolim/projects/NeuralBD
-python3 -i -m nbd.train
+cd /home/fs71254/schirni/
+python -m nstack.train
