@@ -429,8 +429,6 @@ class PSFStackModel(nn.Module):
         # grid_sampling = grid_sampling[None, :, :]
         # area_elements = area_elements[None, :, :]
 
-         #cartesian demo - TODO solve this first then polar grid
-
         # area_elements = torch.ones_like(grid_sampling)[:, :, :1]
 
         #random_sampling = torch.randn(coords.shape[0], n_random_sample, 2, device=coords.device) * self.psf_width
