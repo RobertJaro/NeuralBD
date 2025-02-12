@@ -4,37 +4,33 @@ from torch import nn
 from lightning import LightningModule
 
 
-class PositionalEncoding(LightningModule):
-    """
-    Positional Encoding of the input coordinates.
+class PositionalEncoding(nn.Module):
 
-    encodes x to (..., sin(2^k x), cos(2^k x), ...)
-    k takes "num_freqs" number of values equally spaced between [0, max_freq]
-    """
-
-    def __init__(self, max_freq, num_freqs):
-        """
-        Args:
-            max_freq (int): maximum frequency in the positional encoding.
-            num_freqs (int): number of frequencies between [0, max_freq]
-        """
+    def __init__(self, in_features, num_freqs=128, min_freq=-2, max_freq=8):
         super().__init__()
-        freqs = 2 ** torch.linspace(0, max_freq, num_freqs, dtype=torch.float32)
-        self.register_buffer("freqs", freqs)  # (num_freqs)
-        #freqs = 2 ** torch.FloatTensor(num_freqs).uniform_(0, max_freq)
-        #self.freqs = nn.Parameter(freqs, requires_grad=True)
-
+        frequencies = 2 ** torch.linspace(min_freq, max_freq, num_freqs) * torch.pi
+        self.frequencies = nn.Parameter(frequencies, requires_grad=False)
+        self.d_output = in_features * (1 + num_freqs * 2)
 
     def forward(self, x):
-        #encoded = x[:, None, :] * self.freqs
-        #encoded = encoded.reshape(x.shape[0], -1)
-        #out = torch.cat([torch.sin(encoded), torch.cos(encoded)],
-        #                dim=-1)  # (batch, 2*num_freqs*in_features)
-        x_proj = x[:, None, :] * self.freqs[None, :, None]  # (batch, num_freqs, in_features)
-        x_proj = x_proj.reshape(x.shape[0], -1)  # (batch, num_freqs*in_features)
-        out = torch.cat([torch.sin(x_proj), torch.cos(x_proj)],
-                        dim=-1)  # (batch, 2*num_freqs*in_features)
-        return out
+        encoded = torch.einsum('...i,j->...ij', x, self.frequencies)
+        encoded = encoded.reshape(*x.shape[:-1], -1)
+        encoded = torch.cat([torch.sin(encoded), torch.cos(encoded), x], -1)
+        return encoded
+
+class GaussianPositionalEncoding(nn.Module):
+
+    def __init__(self, d_input, num_freqs=128, scale=2.0 ** 1):
+        super().__init__()
+        frequencies = torch.randn(num_freqs, d_input) * scale
+        self.frequencies = nn.Parameter(2 * torch.pi * frequencies, requires_grad=False)
+        self.d_output = d_input * (num_freqs * 2 + 1)
+
+    def forward(self, x):
+        encoded = torch.einsum('...j,ij->...ij', x, self.frequencies)
+        encoded = encoded.reshape(*x.shape[:-1], -1)
+        encoded = torch.cat([x, torch.sin(encoded), torch.cos(encoded)], -1)
+        return encoded
 
 
 class Sine(nn.Module):
@@ -48,11 +44,15 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim, n_channels=2):
+    def __init__(self, dim, n_channels=2, posencoding=False):
         super().__init__()
-        posenc = PositionalEncoding(8, 20)
-        d_in = nn.Linear(2 * 40, dim)
-        self.d_in = nn.Sequential(posenc, d_in)
+        if posencoding:
+            posenc = GaussianPositionalEncoding(2, scale=2.0 ** 4)
+            #posenc = PositionalEncoding(2, min_freq=0, max_freq=6)
+            d_in = nn.Linear(posenc.d_output, dim)
+            self.d_in = nn.Sequential(posenc, d_in)
+        else:
+            self.d_in = nn.Linear(n_channels, dim)
 
         lin = [nn.Linear(dim, dim) for _ in range(8)]
         self.layers = nn.ModuleList(lin)
@@ -66,11 +66,12 @@ class ImageModel(nn.Module):
         for l in self.layers:
             x = self.activation(l(x))
         x = self.d_out(x)
-        x = self.out_activation(x)
+        #x = self.out_activation(x)
+        x = 10 ** x
         return x
 
 
-class PSFStackModel(LightningModule):
+class PSFStackModel(nn.Module):
 
     def __init__(self, n_images, dim, modes, psf_size, kl_basis, im_scaling, images, simulation, ref_psfs):
         # images = (w, h, n, c)
@@ -83,11 +84,14 @@ class PSFStackModel(LightningModule):
         self.images = images
         self.high_quality = simulation
         self.ref_psfs = ref_psfs
-        self.wavefront_coefficient = nn.Parameter(torch.randn(n_images, self.modes, dtype=torch.float32),
-                                                  requires_grad=True)
-        self.image_model = ImageModel(dim)
-        self.sigma = nn.Parameter(torch.ones(n_images, dtype=torch.float32) * 0.5, requires_grad=True)
-        self.mean = nn.Parameter(torch.zeros(n_images, 2, dtype=torch.float32), requires_grad=True)
+        #self.wavefront_coefficient = nn.Parameter(torch.randn(n_images, self.modes, dtype=torch.float32),
+        #                                          requires_grad=True)
+        self.find_psfs = nn.Parameter(torch.randn(self.psf_size, self.psf_size, n_images, dtype=torch.float32),
+                                    requires_grad=True)
+        self.intensity_scaling = nn.Parameter(torch.ones(n_images, 2, dtype=torch.float32), requires_grad=True)
+        self.image_model = ImageModel(dim, posencoding=True)
+        #self.sigma = nn.Parameter(torch.ones(n_images, dtype=torch.float32) * 0.5, requires_grad=True)
+        #self.mean = nn.Parameter(torch.zeros(n_images, 2, dtype=torch.float32), requires_grad=True)
 
         x_values_psf = torch.linspace(-1., 1., self.psf_size, dtype=torch.float32)
         y_values_psf = torch.linspace(-1., 1., self.psf_size, dtype=torch.float32)
@@ -118,21 +122,26 @@ class PSFStackModel(LightningModule):
 
         sampling_image = self.image_model(grid_sampling_coords.reshape(-1, 2))
         sampling_image = sampling_image.reshape(coords.shape[0], -1, sampling_image.shape[-1])  # batch, psf_coords, channels
-        # sampling_image = sampling_image * condition # set values outside of image to 0
         convolved_images = torch.einsum('...sc,sn->...nc', sampling_image, flat_psf)
+        convolved_images = convolved_images * self.intensity_scaling[None, :, :]
         image = self.image_model(coords)
         return image, convolved_images, psf, self.images, self.high_quality, self.ref_psfs
 
     def get_psf(self):
         # Karhun-Loeve Base
-        wavefront_coefficient = self.wavefront_coefficient
-        wavefront_coefficient = torch.tanh(wavefront_coefficient)
-        wavefront = torch.einsum('kij,lk->lij', self.kl_basis.to(wavefront_coefficient.device), wavefront_coefficient)
-        psfs = torch.stack([self.PSF(torch.exp(1j * wavefront[i, :, :])) for i in range(self.n_images)], -1)
-        #psfs = psfs[60:69, 60:69, :] #crop to 9x9
+        #wavefront_coefficient = self.wavefront_coefficient
+        #wavefront_coefficient = 2 * torch.tanh(wavefront_coefficient)
+        #wavefront = torch.einsum('kij,lk->lij', self.kl_basis.to(wavefront_coefficient.device), wavefront_coefficient)
+        #psfs = torch.stack([self.PSF(torch.exp(1j * wavefront[i, :, :])) for i in range(self.n_images)], -1)
+
+        # find random psfs
+        psfs = self.find_psfs
+        #psfs = self.softplus(psfs)
+        psfs = torch.exp(psfs)
 
         norm = psfs.sum(dim=(0, 1), keepdims=True)
-        return psfs / norm
+        print(np.mean(norm))
+        return psfs / (norm + 1e-8)
 
     def PSF(self, complx_pupil):
         PSF = torch.fft.ifftshift(torch.fft.fft2(torch.fft.fftshift(complx_pupil)))
