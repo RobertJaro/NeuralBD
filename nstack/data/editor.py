@@ -105,7 +105,10 @@ def get_PSFs(wavefront, n_images):
     PSFS = PSFS / (torch.sum(PSFS, dim=(0, 1)))
     return PSFS
 
-def get_convolution(simulation, psfs, n_images):
+def get_convolution(simulation, psfs, n_images, noise=False):
     convolved_images = np.stack([cv2.filter2D(simulation[..., 0], -1, psfs[:, :, i].numpy()) for i in range(n_images)], -1)
+    if noise:
+        noise = np.random.normal(1, 0.004, size=convolved_images.shape)
+        convolved_images += noise
     convolved_images = np.stack([convolved_images, convolved_images], -1)
     return convolved_images
