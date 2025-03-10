@@ -47,8 +47,8 @@ class ImageModel(nn.Module):
     def __init__(self, dim, n_channels=2, posencoding=False):
         super().__init__()
         if posencoding:
-            posenc = GaussianPositionalEncoding(2, scale=2.0 ** 4)
-            #posenc = PositionalEncoding(2, min_freq=0, max_freq=6)
+            posenc = GaussianPositionalEncoding(2, scale=2.0 ** 5)
+            #posenc = PositionalEncoding(2, min_freq=0, max_freq=8)
             d_in = nn.Linear(posenc.d_output, dim)
             self.d_in = nn.Sequential(posenc, d_in)
         else:
@@ -125,7 +125,7 @@ class PSFStackModel(nn.Module):
         convolved_images = torch.einsum('...sc,sn->...nc', sampling_image, flat_psf)
         convolved_images = convolved_images * self.intensity_scaling[None, :, :]
         image = self.image_model(coords)
-        return image, convolved_images, psf, self.images, self.high_quality, self.ref_psfs
+        return image, convolved_images, psf, self.images, self.high_quality, self.ref_psfs, self.intensity_scaling
 
     def get_psf(self):
         # Karhun-Loeve Base
@@ -140,7 +140,6 @@ class PSFStackModel(nn.Module):
         psfs = torch.exp(psfs)
 
         norm = psfs.sum(dim=(0, 1), keepdims=True)
-        print(np.mean(norm))
         return psfs / (norm + 1e-8)
 
     def PSF(self, complx_pupil):

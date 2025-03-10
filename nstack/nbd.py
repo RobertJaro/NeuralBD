@@ -26,7 +26,7 @@ from nstack.model import PSFStackModel
 
 class NEURALBDModule(LightningModule):
 
-        def __init__(self, n_images, dim=512, learning_rate=1e-3, n_modes=44, psf_size=128, muram=True, **kwargs):
+        def __init__(self, n_images, dim=512, learning_rate=1e-4, n_modes=44, psf_size=128, muram=True, **kwargs):
             super().__init__()
             self.n_images = n_images
             self.dim = dim
@@ -39,7 +39,7 @@ class NEURALBDModule(LightningModule):
             self.psfs = get_PSFs(kl_wavefront, self.n_images)
 
             if muram:
-                muram = ReadSimulationEditor().call('/gpfs/data/fs71254/schirni/nstack/data/I_out_med.468000')
+                muram = ReadSimulationEditor().call('/cl_tmp/schirnin/data/I_out_med.468000')
                 sim_array = muram.data
                 vmin, vmax = 0, np.percentile(sim_array, 99)
                 fits_array2_norm = (sim_array - vmin) / (vmax - vmin)
@@ -54,28 +54,29 @@ class NEURALBDModule(LightningModule):
                 #self.im_scaling = (2048 - 1) / 2
             else:
                 fits_array = []
-                data_path = '/gpfs/data/fs71254/schirni/Level1_Files/Level1_Files_Continuum/hifi_20220602_095015_sd.fts'
-                data_path2 = '/gpfs/data/fs71254/schirni/Level2_Files/hifi_20220602_095015_sd_speckle.fts'
+                #data_path = '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
+                #data_path2 = '/gpfs/data/fs71254/schirni/Level2_Files/hifi_20220602_095015_sd_speckle.fts'
+                data_path = '/cl_tmp/schirnin/data/hifi_20170618_082414_sd.fts'
+                data_path2 = '/cl_tmp/schirnin/data/hifi_20170618_082414_sd_speckle.fts'
                 #
-                for i in range(1, 201): # <-- 2022: 0, 200 ; 2022-->: 1,201
+                for i in range(0, 200): # <-- 2022: 0, 200 ; 2022-->: 1,201
                     fits_array.append(fits.getdata(data_path, i))
                 #
                 h, w = fits_array[0].shape
                 fits_array = np.stack(fits_array, -1).reshape((h, w, 100, 2))
                 #fits_array = fits_array[:, :, :, 1]
                 fits_array = fits_array[:, :, :, 0]
-                cutoffs = [0.1]
-                lowpass_img = [get_filtered(fits_array[:, :, i], cutoffs) for i in tqdm(range(self.n_images))]
-                fits_array = np.stack(lowpass_img, -1)
-                fits_array = fits_array[0]
+                #cutoffs = [0.1]
+                #lowpass_img = [get_filtered(fits_array[:, :, i], cutoffs) for i in tqdm(range(fits_array.shape[-1]))]
+                #fits_array = np.stack(lowpass_img, -1)
+                #fits_array = fits_array[0]
                 cont = [contrast(fits_array[:, :, i]) for i in range(fits_array.shape[-1])]
                 highest_indices = [index for index, value in sorted(enumerate(cont), key=lambda x: x[1], reverse=True)[:self.n_images]]
                 fits_array = np.stack([fits_array[:, :, i] for i in highest_indices], -1)
                 #shifting = [optimize_shift(fits_array[:, :, 0], fits_array[:, :, i]) for i in tqdm(range(self.n_images))]
                 #fits_array = np.stack([shift(fits_array[:, :, i], shift=shifting[i][0], mode='nearest') for i in range(self.n_images)], -1)
-                fits_array = fits_array[900:1028, 900:1028, :]
+                fits_array = fits_array[700:1212, 700:1212, :]
                 fits_array = np.stack([fits_array, fits_array], -1)
-                #fits_array = block_reduce(fits_array, block_size=(4, 4, 1, 1), func=np.mean)
                 #
                 fits_array2 = []
                 for i in range(0, 2):
@@ -88,11 +89,15 @@ class NEURALBDModule(LightningModule):
                 fits_array = fits_array[:, :, :self.n_images]
                 #fits_array = fits_array[900:1156, 900:1156, :, :]
                 #fits_array2 = fits_array2[900:1156, 900:1156, :]
-                fits_array2 = fits_array2[900:1028, 900:1028, :]
+                fits_array2 = fits_array2[700:1212, 700:1212, :]
                 #vmin, vmax = fits_array.min(), np.percentile(fits_array, 99)
                 vmin, vmax = fits_array.min(), fits_array.max()
+                #vmin = [np.min(fits_array[:, :, i]) for i in range(self.n_images)]
+                #vmax = [np.max(fits_array[:, :, i]) for i in range(self.n_images)]
                 vmin2, vmax2 = fits_array2.min(), fits_array2.max()
 
+                #self.images = [(fits_array[:, :, i] - vmin[i]) / (vmax[i] - vmin[i]) for i in range(self.n_images)]
+                #self.images = np.stack(self.images, -2)
                 self.images = (fits_array - vmin) / (vmax - vmin)
                 self.high_quality = (fits_array2 - vmin2) / (vmax2 - vmin2)
 
@@ -107,7 +112,7 @@ class NEURALBDModule(LightningModule):
 
         def training_step(self, batch, batch_idx):
             batch_img, coord_batch = batch
-            pred_img, convolved_imgs, psfs, target_imgs, ref_img, ref_psfs = self.model(coord_batch)
+            pred_img, convolved_imgs, psfs, target_imgs, ref_img, ref_psfs, int_scale = self.model(coord_batch)
 
             #loss_fn = torch.nn.HuberLoss()
             # loss_fn = torch.nn.L1Loss()
@@ -124,7 +129,7 @@ class NEURALBDModule(LightningModule):
 
         def validation_step(self, batch, batch_idx):
             batch_img, coord_batch = batch
-            pred_img, convolved_imgs, psfs, target_imgs, ref_img, ref_psfs = self.model(coord_batch)
+            pred_img, convolved_imgs, psfs, target_imgs, ref_img, ref_psfs, int_scale = self.model(coord_batch)
 
             #loss_fn = torch.nn.HuberLoss()
             #loss_fn = torch.nn.L1Loss()
