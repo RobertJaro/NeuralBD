@@ -1,0 +1,22 @@
+base_dir: /gpfs/data/fs71254/schirni/NeuralBD
+data:
+  type: 'GREGOR'
+  data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
+  n_images: 50
+  pixel_per_ds: 511.5
+  x_crop: 964
+  y_crop: 964
+  crop_size: 128
+  sampling: 'grid'
+
+logging:
+  project: NeuralBD
+  name: GREGOR
+
+training:
+  epochs: 10000
+  log_every_n_steps: 100
+  name: GREGOR_lr_scheduler
+
+model:
+  dim: 512
