@@ -4,7 +4,7 @@ import torch
 def PSF(complx_pupil):
     PSF = torch.fft.ifftshift(torch.fft.fft2(torch.fft.fftshift(complx_pupil)))
     PSF = (torch.abs(PSF))**2 #or PSF*PSF.conjugate()
-    PSF = PSF/ torch.sum(PSF, dim=(0, 1))  #normalizing the PSF
+    #PSF = PSF/ torch.sum(PSF, dim=(0, 1))  #normalizing the PSF
     return PSF
 
 def OTF(psf):

@@ -6,7 +6,7 @@ Asensio Ramos et al.: https://github.com/aasensio/neural-MFBD
 
 
 import numpy as np
-from nstack.data import zern_mfbd as zern
+from nbd.data import zern_mfbd as zern
 import matplotlib.pyplot as pl
 from tqdm import tqdm
 import scipy.special as sp
