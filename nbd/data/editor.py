@@ -1,15 +1,17 @@
 from abc import ABC, abstractmethod
+
 import cv2
 import numpy as np
 import torch
 from astropy import units as u
-from astropy.io import fits
-from sunpy.map import Map, make_fitswcs_header
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from skimage import filters
 from sunpy.coordinates import frames
-from nstack.data.KL_modes import KL
+from sunpy.map import Map, make_fitswcs_header
 
-from nstack.data.psfs import PSF
+from nbd.data.KL_modes import KL
+from nbd.data.psfs import PSF
 
 
 class Editor(ABC):
@@ -71,6 +73,7 @@ class ReadNumpyEditor(Editor):
         data = data.transpose(1, 2, 0)
         return data
 
+
 class NormalizeSimulationEditor(Editor):
 
     def call(self, data, **kwargs):
@@ -79,6 +82,7 @@ class NormalizeSimulationEditor(Editor):
         sim_norm = (data - vmin) / (vmax - vmin)
         sim_stack = np.stack([sim_norm, sim_norm], -1)
         return sim_stack
+
 
 class CropSimulationEditor(Editor):
 
@@ -93,22 +97,72 @@ def get_KL_basis(n_modes_max, size):
     KL_modes = torch.tensor(KL_modes, dtype=torch.float32)
     return KL_modes
 
+
 def get_KL_wavefront(KL_modes, n_modes_max, n_images, coef_range=2):
     coef = torch.FloatTensor(n_images, n_modes_max).uniform_(-coef_range, coef_range)
-    #coef = torch.FloatTensor(n_images, n_modes_max).uniform_(0, 1)
+    # coef = torch.FloatTensor(n_images, n_modes_max).uniform_(0, 1)
     KL_wavefront = torch.einsum('kij,lk->lij', KL_modes, coef)
     return KL_wavefront
 
-def get_PSFs(wavefront, n_images):
+
+def generate_PSFs(wavefront, n_images):
     PSFS = torch.stack([PSF(torch.exp(1j * wavefront[i, :, :])) for i in range(n_images)], -1)
-    #PSFS = PSFS[60:69, 60:69, :]
+    # PSFS = PSFS[60:69, 60:69, :]
     PSFS = PSFS / (torch.sum(PSFS, dim=(0, 1)))
     return PSFS
 
+
 def get_convolution(simulation, psfs, n_images, noise=False):
-    convolved_images = np.stack([cv2.filter2D(simulation[..., 0], -1, psfs[:, :, i].numpy()) for i in range(n_images)], -1)
+    convolved_images = np.stack([cv2.filter2D(simulation[..., 0], -1, psfs[:, :, i].numpy()) for i in range(n_images)],
+                                -1)
     if noise:
         noise = np.random.normal(1, 0.004, size=convolved_images.shape)
         convolved_images += noise
     convolved_images = np.stack([convolved_images, convolved_images], -1)
     return convolved_images
+
+
+def compute_rms_contrast(image):
+    mean = np.mean(image)
+    rms = np.sqrt(np.mean((image - mean) ** 2))
+    return rms
+
+
+def cutout(image, x, y, size):
+    return image[x - size // 2:x + size // 2, y - size // 2:y + size // 2, :, :]
+
+
+def get_filtered(image, cutoffs, squared_butterworth=True, order=3.0, npad=0):
+    """
+    Lowpass and highpass butterworth filtering at all specified cutoffs.
+    Parameters
+    ----------
+    image : ndarray
+        The image to be filtered.
+    cutoffs : sequence of int
+        Both lowpass and highpass filtering will be performed for each cutoff
+        frequency in `cutoffs`.
+    squared_butterworth : bool, optional
+        Whether the traditional Butterworth filter or its square is used.
+    order : float, optional
+        The order of the Butterworth filter
+    Returns
+    -------
+    lowpass_filtered : list of ndarray
+        List of images lowpass filtered at the frequencies in `cutoffs`.
+    highpass_filtered : list of ndarray
+        List of images highpass filtered at the frequencies in `cutoffs`.
+    """
+    lowpass_filtered = []
+    for cutoff in cutoffs:
+        lowpass_filtered.append(
+            filters.butterworth(
+                image,
+                cutoff_frequency_ratio=cutoff,
+                order=order,
+                high_pass=False,
+                squared_butterworth=squared_butterworth,
+                npad=npad,
+            )
+        )
+    return lowpass_filtered
