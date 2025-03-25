@@ -1,13 +1,16 @@
+import multiprocessing as mp
 import os
 
 import numpy as np
 import torch
 from astropy.io import fits
 from pytorch_lightning import LightningDataModule
+from scipy.ndimage import shift
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 from nbd.data.editor import get_KL_basis, get_KL_wavefront, generate_PSFs, ReadSimulationEditor, get_convolution, \
-    cutout, get_filtered, compute_rms_contrast
+    cutout, get_filtered, optimize_shift
 
 
 class NeuralBDDataModule(LightningDataModule):
@@ -87,8 +90,10 @@ class GREGORDataset(TensorDataset):
 
         # Load data
         fits_array = []
+        fits_header = []
         for i in range(1, 201):  # <-- 2022: 0, 200 ; 2022-->: 1,201
             fits_array.append(fits.getdata(data_path, i))
+            fits_header.append(fits.getheader(data_path, i))
         h, w = fits_array[0].shape
         fits_array = np.stack(fits_array, -1).reshape((h, w, 100, 2))
 
@@ -99,25 +104,45 @@ class GREGORDataset(TensorDataset):
             fits_array = fits_array[0]
 
         # Select images with highest contrast
-        fits_array_cont = fits_array[:, :, :, 0]
-        contrast = [compute_rms_contrast(fits_array_cont[:, :, i]) for i in range(fits_array_cont.shape[-1])]
+        mfgs = [fits_header[i]['MFGSMEAN'] for i in range(100)]
         highest_indices = [index for index, value in
-                           sorted(enumerate(contrast), key=lambda x: x[1], reverse=True)[:n_images]]
-        self.image_contrast = [contrast[i] for i in highest_indices]
+                           sorted(enumerate(mfgs), key=lambda x: x[1], reverse=True)[:n_images]]
+        self.image_contrast = [mfgs[i] for i in highest_indices]
         fits_array = np.stack([fits_array[:, :, i, :] for i in highest_indices], -2)
 
+        # apply shift to align images
+        max_shift = 130
+
+        print('Aligning images...')
+        with mp.Pool(mp.cpu_count()) as pool:
+            shifts = list(tqdm(pool.starmap(optimize_shift,
+                                            [(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                              x_crop - max_shift:x_crop + crop_size + max_shift, 0, 0],
+                                              fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                              x_crop - max_shift:x_crop + crop_size + max_shift, i, 0])
+                                             for i in range(n_images)]), total=n_images))
+
+        fits_array = np.stack([shift(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                     x_crop - max_shift:x_crop + crop_size + max_shift, i, 0], shift=shifts[i][0],
+                                     mode='nearest') for i in range(n_images)], -1)
+
         # Load speckle data if available
-        if os.path.exists(data_path.split('.')[-2]+'_speckle.fts'):
+        if os.path.exists(data_path.split('.')[-2] + '_speckle.fts'):
             fits_array_speckle = []
             for i in range(2):
-                fits_array_speckle.append(fits.getdata(data_path.split('.')[-2]+'_speckle.fts', i))
+                fits_array_speckle.append(fits.getdata(data_path.split('.')[-2] + '_speckle.fts', i))
             fits_array_speckle = np.stack(fits_array_speckle, -1)
-            self.fits_array_speckle = cutout(fits_array_speckle[:, :, None, :], x_crop, y_crop, crop_size)
+            fits_array_speckle = cutout(fits_array_speckle, x_crop, y_crop, crop_size)
+            fits_array_speckle = fits_array_speckle[:, :, 0]
+            self.fits_array_speckle = np.stack([fits_array_speckle, fits_array_speckle], -1)
         else:
             self.fits_array_speckle = None
 
         # Crop images
-        fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
+        fits_array = cutout(fits_array, max_shift, max_shift, crop_size)
+
+        # workaround to use the same channel
+        fits_array = np.stack([fits_array, fits_array], -1)
 
         # Normalize images
         vmin, vmax = fits_array.min(), fits_array.max()

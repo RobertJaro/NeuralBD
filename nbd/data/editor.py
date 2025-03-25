@@ -6,6 +6,7 @@ import torch
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from scipy.ndimage import shift
 from skimage import filters
 from sunpy.coordinates import frames
 from sunpy.map import Map, make_fitswcs_header
@@ -129,7 +130,7 @@ def compute_rms_contrast(image):
 
 
 def cutout(image, x, y, size):
-    return image[x - size // 2:x + size // 2, y - size // 2:y + size // 2, :, :]
+    return image[x - size // 2:x + size // 2, y - size // 2:y + size // 2, :]
 
 
 def get_filtered(image, cutoffs, squared_butterworth=True, order=3.0, npad=0):
@@ -166,3 +167,34 @@ def get_filtered(image, cutoffs, squared_butterworth=True, order=3.0, npad=0):
             )
         )
     return lowpass_filtered
+
+
+def correlation_coefficient(patch1, patch2):
+    """
+    Pearson correlation coefficient between two patches.
+
+    Args:
+        patch1: Patch of image 1
+        patch2: Patch of image 2
+    """
+    product = np.nanmean((patch1 - np.nanmean(patch1)) * (patch2 - np.nanmean(patch2)))
+    stds = np.nanstd(patch1) * np.nanstd(patch2)
+    if stds == 0:
+        return 0
+    else:
+        product /= stds
+        return product
+
+
+def optimize_shift(img1, img2, max_shift=20):
+    """Finds the best shift that maximizes the Pearson correlation coefficient."""
+    best_shift = (0, 0)
+    best_corr = 0.97
+    for dx in range(-max_shift, max_shift + 1):
+        for dy in range(-max_shift, max_shift + 1):
+            shifted_img2 = shift(img2, shift=(dx, dy), mode='nearest')
+            corr = correlation_coefficient(img1, shifted_img2)
+            if corr > best_corr or best_corr is None:
+                best_corr = corr
+                best_shift = (dx, dy)
+    return best_shift, best_corr
