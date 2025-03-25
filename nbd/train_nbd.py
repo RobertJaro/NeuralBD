@@ -13,6 +13,7 @@ from nbd.nbd import NEURALBDModule
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str)
+    parser.add_argument('--reload', action='store_true')
     args, overwrite_args = parser.parse_known_args()
 
     with open(args.config, "r") as stream:
@@ -25,8 +26,13 @@ if __name__ == '__main__':
     os.makedirs(base_dir, exist_ok=True)
 
     # Init Dataset
+    save_path = os.path.join(base_dir, 'data_module.pl')
     data_config = config['data']
-    data_module = NeuralBDDataModule(**data_config)
+    if os.path.exists(save_path) and not args.reload:
+        data_module = torch.load(save_path, weights_only=False)
+    else:
+        data_module = NeuralBDDataModule(**data_config)
+        torch.save(data_module, save_path)
 
     # setup training config
     training_config = config['training']
