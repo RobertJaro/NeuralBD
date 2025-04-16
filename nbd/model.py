@@ -19,7 +19,7 @@ class PositionalEncoding(nn.Module):
 
 class GaussianPositionalEncoding(nn.Module):
 
-    def __init__(self, d_input, num_freqs=128, scale=2.0 ** 1):
+    def __init__(self, d_input, num_freqs=128, scale=2.0 ** 3):
         super().__init__()
         frequencies = torch.randn(num_freqs, d_input) * scale
         self.frequencies = nn.Parameter(2 * torch.pi * frequencies, requires_grad=False)
@@ -43,7 +43,7 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 5):
+    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 4):
         super().__init__()
         if posencoding:
             posenc = GaussianPositionalEncoding(2, scale=posenc_scale)
