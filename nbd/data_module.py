@@ -98,12 +98,12 @@ class GREGORDataset(TensorDataset):
         # Load data
         fits_array = []
         fits_header = []
-        for i in range(1, 201):  # <-- 2022: 0, 200 ; 2022-->: 1,201
+        for i in range(0, 200):  # <-- 2022: 0, 200 ; 2022-->: 1,201
             fits_array.append(fits.getdata(data_path, i))
             fits_header.append(fits.getheader(data_path, i))
         h, w = fits_array[0].shape
         fits_array = np.stack(fits_array, -1).reshape((h, w, 100, 2))
-        # fits_array = fits_array[..., 0]  # remove the second channel
+        fits_array = fits_array[..., 0]  # remove the second channel
 
         # Apply low-pass filter
         if filter:
@@ -112,20 +112,20 @@ class GREGORDataset(TensorDataset):
             fits_array = fits_array[0]
 
         # apply shift to align images
-        max_shift = 230
+        # max_shift = 230
 
-        print('Aligning images...')
-        with mp.Pool(mp.cpu_count()) as pool:
-            shifts = list(tqdm(pool.starmap(optimize_shift,
-                                            [(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-                                              x_crop - max_shift:x_crop + crop_size + max_shift, 0, 0],
-                                              fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-                                              x_crop - max_shift:x_crop + crop_size + max_shift, i, 0])
-                                             for i in range(n_images)]), total=n_images))
+        #print('Aligning images...')
+        #with mp.Pool(mp.cpu_count()) as pool:
+        #    shifts = list(tqdm(pool.starmap(optimize_shift,
+        #                                    [(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+        #                                      x_crop - max_shift:x_crop + crop_size + max_shift, 0, 0],
+        #                                      fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+        #                                      x_crop - max_shift:x_crop + crop_size + max_shift, i, 0])
+        #                                     for i in range(n_images)]), total=n_images))
 
-        fits_array = np.stack([shift_image(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-                                           x_crop - max_shift:x_crop + crop_size + max_shift, i, 0],
-                                           shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
+        #fits_array = np.stack([shift_image(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+        #                                   x_crop - max_shift:x_crop + crop_size + max_shift, i, 0],
+        #                                   shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
 
         # Load speckle data if available
         if os.path.exists(data_path.split('.')[-2] + '_speckle.fts'):
@@ -140,8 +140,8 @@ class GREGORDataset(TensorDataset):
             self.fits_array_speckle = None
 
         # Crop images
-        fits_array = cutout(fits_array, max_shift, max_shift, crop_size)
-        # fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
+        # fits_array = cutout(fits_array, max_shift, max_shift, crop_size)
+        fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
 
         # Normalize images
         vmin, vmax = fits_array.min(), fits_array.max()
@@ -162,8 +162,12 @@ class GREGORDataset(TensorDataset):
 
         # Create dataset
         image_coordinates = np.stack(np.mgrid[:images.shape[0], :images.shape[1]], -1)
+        image_coordinates = image_coordinates / pixel_per_ds
+
+        # apply binning and cropping
+        # x_start, x_end, y_start, y_end = crop if crop else (0, -1, 0, -1)
+        # image_coordinates = image_coordinates[x_start:x_end:bin, y_start:y_end:bin]
         coordinates_tensor = torch.from_numpy(image_coordinates).float().view(-1, 2)
-        coordinates_tensor = coordinates_tensor / pixel_per_ds
         image_tensor = torch.from_numpy(images).float().reshape(-1, n_images, 2)
 
         if shuffle:

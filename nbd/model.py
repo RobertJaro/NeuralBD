@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch import nn
 
@@ -65,4 +66,26 @@ class ImageModel(nn.Module):
             x = self.activation(l(x))
         x = self.d_out(x)
         x = 10 ** x
+        return x
+
+class PSFModel(nn.Module):
+
+    def __init__(self, psf_shape, dim=64, n_layers=4):
+        super().__init__()
+        self.psf_shape = psf_shape
+        self.dim = dim
+
+        self.d_in = nn.Linear(2, dim)
+        lin = [nn.Linear(dim, dim) for _ in range(n_layers)]
+        self.layers = nn.ModuleList(lin)
+        self.d_out = nn.Linear(dim, np.prod(psf_shape))
+        self.activation = Sine()
+
+    def forward(self, coords):
+        x = self.activation(self.d_in(coords))
+
+        for l in self.layers:
+            x = self.activation(l(x))
+        x = self.d_out(x)
+        x = x.reshape(-1, *self.psf_shape)
         return x
