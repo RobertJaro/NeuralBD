@@ -98,7 +98,7 @@ class GREGORDataset(TensorDataset):
         # Load data
         fits_array = []
         fits_header = []
-        for i in range(0, 200):  # <-- 2022: 0, 200 ; 2022-->: 1,201
+        for i in range(1, 201):  # <-- 2022: 0, 200 ; 2022-->: 1,201
             fits_array.append(fits.getdata(data_path, i))
             fits_header.append(fits.getheader(data_path, i))
         h, w = fits_array[0].shape
@@ -112,20 +112,20 @@ class GREGORDataset(TensorDataset):
             fits_array = fits_array[0]
 
         # apply shift to align images
-        # max_shift = 230
+        max_shift = 230
 
-        #print('Aligning images...')
-        #with mp.Pool(mp.cpu_count()) as pool:
-        #    shifts = list(tqdm(pool.starmap(optimize_shift,
-        #                                    [(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                      x_crop - max_shift:x_crop + crop_size + max_shift, 0, 0],
-        #                                      fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                      x_crop - max_shift:x_crop + crop_size + max_shift, i, 0])
-        #                                     for i in range(n_images)]), total=n_images))
+        print('Aligning images...')
+        with mp.Pool(mp.cpu_count()) as pool:
+            shifts = list(tqdm(pool.starmap(optimize_shift,
+                                            [(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                              x_crop - max_shift:x_crop + crop_size + max_shift, 0],
+                                              fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                              x_crop - max_shift:x_crop + crop_size + max_shift, i])
+                                             for i in range(n_images)]), total=n_images))
 
-        #fits_array = np.stack([shift_image(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                   x_crop - max_shift:x_crop + crop_size + max_shift, i, 0],
-        #                                   shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
+        fits_array = np.stack([shift_image(fits_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                           x_crop - max_shift:x_crop + crop_size + max_shift, i],
+                                           shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
 
         # Load speckle data if available
         if os.path.exists(data_path.split('.')[-2] + '_speckle.fts'):
@@ -133,15 +133,16 @@ class GREGORDataset(TensorDataset):
             for i in range(2):
                 fits_array_speckle.append(fits.getdata(data_path.split('.')[-2] + '_speckle.fts', i))
             fits_array_speckle = np.stack(fits_array_speckle, -1)
-            fits_array_speckle = cutout(fits_array_speckle, x_crop, y_crop, crop_size)
-            fits_array_speckle = fits_array_speckle[:, :, 0]
+            fits_array_speckle = cutout(fits_array_speckle[:, :, :, None], x_crop, y_crop, crop_size)
+            fits_array_speckle = fits_array_speckle[:, :, 0, 0]
             self.fits_array_speckle = np.stack([fits_array_speckle, fits_array_speckle], -1)
+            # self.fits_array_speckle = fits_array_speckle
         else:
             self.fits_array_speckle = None
 
         # Crop images
-        # fits_array = cutout(fits_array, max_shift, max_shift, crop_size)
-        fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
+        fits_array = cutout(fits_array, max_shift, max_shift, crop_size)
+        # fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
 
         # Normalize images
         vmin, vmax = fits_array.min(), fits_array.max()
