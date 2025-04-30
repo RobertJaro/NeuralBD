@@ -7,7 +7,7 @@ data:
   x_crop: 332
   y_crop: 332
   crop_size: 256
-  sampling: 'grid'
+  psf_type: 'grid'
 
 logging:
   project: NeuralBD

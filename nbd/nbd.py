@@ -7,26 +7,27 @@ from pytorch_lightning import LightningModule
 from torch import nn
 from torch.optim.lr_scheduler import ExponentialLR
 
+from nbd.data.editor import gaussian_psf
 from nbd.model import ImageModel, PSFModel
 
 
 class NEURALBDModule(LightningModule):
 
-    def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(11, 11),
+    def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(29, 29),
                  model_config=None, weights=None, lr_config=None, speckle=None, muram=None,
-                 psf=None, sampling='grid', **kwargs):
+                 psf=None, psf_type='default', **kwargs):
         super().__init__()
         self.images_shape = images_shape
         self.n_images = self.images_shape[2]
         self.speckle = speckle
-        self.sampling = sampling
+        self.psf_type = psf_type
         self.muram = muram
         self.kl_psfs = psf
         self.psf_size = psf_size
 
         self.learning_rate = learning_rate
 
-        if self.sampling == 'grid':
+        if self.psf_type == 'default':
             # Create PSF coordinates for sampling (Grid sampling)
             x_values = torch.linspace(-(psf_size[0] // 2), psf_size[0] // 2, psf_size[0], dtype=torch.float32)
             y_values = torch.linspace(-(psf_size[1] // 2), psf_size[1] // 2, psf_size[1], dtype=torch.float32)
@@ -40,41 +41,16 @@ class NEURALBDModule(LightningModule):
             # log_psfs = torch.randn(*psf_size, self.n_images, dtype=torch.float32)
             # self.log_psfs = nn.Parameter(log_psfs, requires_grad=True)
 
+            # Create Gaussian PSFs
+            log_psfs = gaussian_psf(psf_size, sigma=5, n_images=self.n_images)
+            self.log_psfs = nn.Parameter(torch.tensor(log_psfs, dtype=torch.float32), requires_grad=True)
+
+
+        elif self.psf_type == 'varying':
             self.psf_model = PSFModel((*psf_size, self.n_images))
 
-
-        elif self.sampling == 'spherical':
-            # Create PSF coordinates for sampling (Spherical sampling)
-            max_radius = 10
-            r_values = np.linspace(0, 1, 10, dtype=np.float32) * max_radius
-            phi_values = np.linspace(0, 2 * torch.pi, 18, endpoint=False, dtype=np.float32)
-            # remove r = 0
-            self.phi, self.r = np.meshgrid(phi_values, r_values[1:], indexing='ij')
-
-            # convert to cartesian
-            x, y = self.r * np.sin(self.phi), self.r * np.cos(self.phi)
-            psf_coords = np.stack([x, y], -1)  # shape: phi, r, 2
-
-            # add central point
-            psf_coords = psf_coords / pixel_per_ds
-            self.psf_coords = nn.Parameter(torch.tensor(psf_coords, dtype=torch.float32), requires_grad=False)
-
-            # calculate area element
-            dr = np.gradient(self.r, axis=1)
-            dphi = np.gradient(self.phi, axis=0)
-            area_elements = self.r * dphi * dr  # shape: phi, r
-
-            area_elements = area_elements / (pixel_per_ds)
-            # area_elements = np.repeat(area_elements[..., None], self.n_images, axis=-1) * 6.5e1 # rmax=20
-            area_elements = np.repeat(area_elements[..., None], self.n_images, axis=-1) * 2.5e2  # r_max=10
-            self.area_elements = nn.Parameter(torch.tensor(area_elements, dtype=torch.float32), requires_grad=False)
-
-            # Create learnable PSFs
-            log_psfs = np.random.randn(x.shape[0], x.shape[1], self.n_images).astype(np.float32)
-            self.psf_model = nn.Parameter(torch.tensor(log_psfs, dtype=torch.float32), requires_grad=True)
-
         else:
-            raise ValueError(f'Unknown sampling method: {sampling}')
+            raise ValueError(f'Unknown psf method: {self.psf_type}')
 
         # Create and normalize weights
         # weights = (weights - np.min(weights)) / (np.max(weights) - np.min(weights)) * 0.1 + 0.9
@@ -121,7 +97,13 @@ class NEURALBDModule(LightningModule):
 
         # load the PSF
         # psf: batch, x, y, n_images
-        psf = self.get_psf(coords, area_elements)
+        if self.psf_type == 'default':
+            psf = self.get_psf(area_elements)
+        elif self.psf_type == 'varying':
+            psf = self.get_varying_psf(coords, area_elements)
+        else:
+            raise ValueError(f'Unknown psf method: {self.psf_type}')
+
         flat_psf = psf.reshape(coords.shape[0], -1, self.n_images)
         flat_area_elements = area_elements.reshape(coords.shape[0], -1, 1)
 
@@ -139,16 +121,30 @@ class NEURALBDModule(LightningModule):
         shift = torch.tanh(self.shift) * self.shift_scaling
         return shift
 
-    def get_psf(self, coords, area_elements):
+    def get_psf(self, area_elements=None):
         # area_elements: batch, x, y
         # self.log_psfs: x, y, n_images
-        # psfs = torch.exp(self.log_psfs) # --> x, y, n_images
+        psfs = torch.exp(self.log_psfs)  # --> x, y, n_images
+
+        # Normalize PSFs
+        if area_elements is None:
+            norm = psfs.sum(dim=(0, 1), keepdim=True)
+        else:
+            norm = (psfs[None, :, :, :] * area_elements[:, :, :, None]).sum(dim=(1, 2),
+                                                                            keepdim=True)  # --> batch, 1, 1, n_images
+
+        return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
+
+    def get_varying_psf(self, coords, area_elements):
+        # area_elements: batch, x, y
+        # self.log_psfs: batch, x, y, n_images
         log_psfs = self.psf_model(coords)  # --> batch, x, y, n_images
         psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
 
-        # normalize PSFs
+        # Normalize PSFs
         norm = (psfs * area_elements[:, :, :, None]).sum(dim=(1, 2), keepdim=True)  # --> batch, 1, 1, n_images
-        return psfs / (norm + 1e-8) # --> batch, x, y, n_images
+
+        return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
 
     def training_step(self, batch, batch_idx):
         convolved_true, coords = batch
@@ -172,8 +168,14 @@ class NEURALBDModule(LightningModule):
         return image_loss
 
     def configure_optimizers(self):
-        parameters = list(self.image_model.parameters()) + list(self.psf_model.parameters())
-        # parameters.append(self.log_psfs)
+        if self.psf_type == 'default':
+            parameters = list(self.image_model.parameters())
+            parameters.append(self.log_psfs)
+        elif self.psf_type == 'varying':
+            parameters = list(self.image_model.parameters()) + list(self.psf_model.parameters())
+        else:
+            raise ValueError(f'Unknown psf method: {self.psf_type}')
+
         self.optimizer = torch.optim.Adam(parameters, lr=self.learning_rate)
 
         self.scheduler = ExponentialLR(self.optimizer, gamma=(self.lr_config['end'] / self.lr_config['start']) ** (
@@ -198,9 +200,16 @@ class NEURALBDModule(LightningModule):
         convolved_true = torch.cat([o['convolved_true'] for o in outputs]).reshape(self.images_shape)
         image_pred = torch.cat([o['image_pred'] for o in outputs]).reshape(self.images_shape[0], self.images_shape[1],
                                                                            self.images_shape[-1])
-        dummy_coords = torch.ones(1, 2, dtype=torch.float32, device=convolved_pred.device) * 0.5
-        dummy_area_elements = torch.ones(1, *self.psf_size, dtype=torch.float32, device=convolved_pred.device) * 0.5
-        psfs_pred = self.get_psf(dummy_coords, dummy_area_elements)[0]
+
+        if self.psf_type == 'default':
+            psfs_pred = self.get_psf()
+        elif self.psf_type == 'varying':
+            # Dummy coordinates and area elements for PSF prediction
+            dummy_coords = torch.ones(1, 2, dtype=torch.float32, device=convolved_pred.device) * 0.5
+            dummy_area_elements = torch.ones(1, *self.psf_size, dtype=torch.float32, device=convolved_pred.device) * 0.5
+            psfs_pred = self.get_varying_psf(dummy_coords, dummy_area_elements)[0]
+        else:
+            raise ValueError(f'Unknown psf method: {self.psf_type}')
 
         convolved_pred = convolved_pred.cpu().detach().numpy()
         convolved_true = convolved_true.cpu().detach().numpy()
@@ -212,13 +221,7 @@ class NEURALBDModule(LightningModule):
 
         self._plot_deconvolution(convolved_true, image_pred)
         self._plot_convolved(convolved_true, convolved_pred)
-
-        if self.sampling == 'grid':
-            self._plot_psfs(psfs_pred)
-        elif self.sampling == 'spherical':
-            self._plot_spherical_psfs(psfs_pred)
-        else:
-            raise ValueError(f'Unknown sampling method for plotting: {self.sampling}')
+        self._plot_psfs(psfs_pred)
 
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
@@ -336,24 +339,6 @@ class NEURALBDModule(LightningModule):
 
         fig.tight_layout()
         wandb.log({'PSFs': fig})
-        plt.close()
-
-    def _plot_spherical_psfs(self, psfs):
-        n_images = psfs.shape[-1]
-        n_samples = min(5, n_images)
-
-        fig, axs = plt.subplots(1, n_samples, figsize=(2 * n_samples, 4), subplot_kw={'projection': 'polar'}, dpi=300)
-        # Collect images for a shared colorbar
-        ims = []
-        for i, ax in enumerate(axs):
-            im = ax.pcolormesh(self.phi, self.r, np.sqrt(psfs[:, :, i]), vmin=0, vmax=1, edgecolors='face')
-            ims.append(im)
-            ax.axis('off')
-            ax.set_title(f'PSF {i:02d}')
-        # Add a colorbar at the bottom, aligned with figure width
-        cbar_ax = fig.add_axes([0.15, 0.2, 0.7, 0.03])  # [left, bottom, width, height]
-        fig.colorbar(ims[0], cax=cbar_ax, orientation='horizontal')
-        wandb.log({'PSFs': wandb.Image(fig)})
         plt.close()
 
     def _plot_kl_psfs(self, kl_psfs, psfs_pred):

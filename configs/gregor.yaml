@@ -1,13 +1,13 @@
-base_dir: /gpfs/data/fs71254/schirni/NeuralBD_variable_psf_failed
+base_dir: /gpfs/data/fs71254/schirni/NeuralBD_default_psf_align_channel0
 data:
   type: 'GREGOR'
-  data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20191019_082115_sd.fts'
+  data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
   n_images: 50
   pixel_per_ds: 511.5
   x_crop: 964
   y_crop: 964
-  crop_size: 512
-  sampling: 'grid'
+  crop_size: 128
+  psf_type: 'default'
 
 logging:
   project: NeuralBD

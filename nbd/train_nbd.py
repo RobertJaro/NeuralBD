@@ -51,7 +51,7 @@ if __name__ == '__main__':
         neuralbd = NEURALBDModule(
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'], weights=data_module.contrast_weights, speckle=data_module.speckle,
-            sampling=data_config['sampling'],
+            sampling=data_config['psf_type'],
             **config['model'])
 
     elif data_config['type'] == 'MURAM':
@@ -59,7 +59,7 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'],
             muram=data_module.muram, psf=data_module.psfs,
-            sampling=data_config['sampling'],
+            sampling=data_config['psf_type'],
             **config['model'])
     else:
         raise ValueError('Unknown data type')
