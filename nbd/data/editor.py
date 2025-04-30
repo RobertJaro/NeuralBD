@@ -194,3 +194,23 @@ def shift_image(image: np.ndarray, shift_x: int, shift_y: int) -> np.ndarray:
     shifted_image[y_start:y_end, x_start:x_end] = image[src_y_start:src_y_end, src_x_start:src_x_end]
 
     return shifted_image
+
+
+def gaussian_psf(size, sigma, n_images):
+    """
+    Create a Gaussian PSF (Point Spread Function) with the given size, standard deviation (sigma) and number of images.
+
+    Parameters:
+    - size (int): Size of the PSF (size x size).
+    - sigma (float): Standard deviation of the Gaussian.
+    - n_images (int): Number of images to create.
+
+    Returns:
+    - np.ndarray: Gaussian PSF.
+    """
+    x = np.linspace(-size[0] // 2, size[0] // 2, size[0])
+    y = np.linspace(-size[1] // 2, size[1] // 2, size[1])
+    X, Y = np.meshgrid(x, y)
+    psf = np.exp(-(X ** 2 + Y ** 2) / (2 * sigma ** 2))
+    psf = np.stack([psf] * n_images, axis=-1)  # Stack for n_images
+    return psf
