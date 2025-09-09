@@ -1,0 +1,23 @@
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/DKIST_quiet
+data:
+  type: 'DKIST'
+  data_path: '/gpfs/data/fs71254/schirni/DKIST/1370.npz'
+  n_images: 50
+  pixel_per_ds: 511.5
+  x_crop: 900
+  y_crop: 3400
+  crop_size: 512
+  psf_type: 'default'
+
+logging:
+  project: NeuralBD
+  name: DKIST
+
+training:
+  epochs: 10000
+  log_every_n_steps: 100
+  name: DKIST
+  check_val_every_n_epoch: 10
+model:
+  dim: 512
+  posencoding: True
