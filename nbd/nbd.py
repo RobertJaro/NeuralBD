@@ -27,16 +27,16 @@ class NEURALBDModule(LightningModule):
 
         self.learning_rate = learning_rate
 
+        # Create PSF coordinates for sampling (Grid sampling)
+        x_values = torch.linspace(-(psf_size[0] // 2), psf_size[0] // 2, psf_size[0], dtype=torch.float32)
+        y_values = torch.linspace(-(psf_size[1] // 2), psf_size[1] // 2, psf_size[1], dtype=torch.float32)
+        x, y = torch.meshgrid(x_values, y_values, indexing='ij')
+        psf_coords = torch.stack([x, y], -1)  # psf_coords, xy
+        psf_coords = psf_coords / pixel_per_ds
+
+        self.psf_coords = nn.Parameter(psf_coords, requires_grad=False)
+
         if self.psf_type == 'default':
-            # Create PSF coordinates for sampling (Grid sampling)
-            x_values = torch.linspace(-(psf_size[0] // 2), psf_size[0] // 2, psf_size[0], dtype=torch.float32)
-            y_values = torch.linspace(-(psf_size[1] // 2), psf_size[1] // 2, psf_size[1], dtype=torch.float32)
-            x, y = torch.meshgrid(x_values, y_values, indexing='ij')
-            psf_coords = torch.stack([x, y], -1)  # psf_coords, xy
-            psf_coords = psf_coords / pixel_per_ds
-
-            self.psf_coords = nn.Parameter(psf_coords, requires_grad=False)
-
             # Create learnable PSFs
             # log_psfs = torch.randn(*psf_size, self.n_images, dtype=torch.float32)
             # self.log_psfs = nn.Parameter(log_psfs, requires_grad=True)
@@ -60,6 +60,7 @@ class NEURALBDModule(LightningModule):
         # Create image model
         model_config = model_config if model_config is not None else {}
         self.image_model = ImageModel(**model_config)
+        # self.image_model = ImageSirenModel(**model_config)
 
         # Learning rate scheduler
         self.lr_config = {"start": 1e-4, "end": 1e-4, "iterations": 1e5} if lr_config is None else lr_config
@@ -117,23 +118,21 @@ class NEURALBDModule(LightningModule):
 
         return convolved_images
 
-    def get_shift(self):
-        shift = torch.tanh(self.shift) * self.shift_scaling
-        return shift
-
     def get_psf(self, area_elements=None):
         # area_elements: batch, x, y
         # self.log_psfs: x, y, n_images
         psfs = torch.exp(self.log_psfs)  # --> x, y, n_images
-
+        # kl_psfs = self.kl_psfs.to(self.log_psfs.device)
         # Normalize PSFs
         if area_elements is None:
             norm = psfs.sum(dim=(0, 1), keepdim=True)
+            # kl_psfs = kl_psfs
         else:
             norm = (psfs[None, :, :, :] * area_elements[:, :, :, None]).sum(dim=(1, 2),
                                                                             keepdim=True)  # --> batch, 1, 1, n_images
-
+            # kl_psfs = kl_psfs[None, :, :, :] * area_elements[:, :, :, None]
         return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
+        # return kl_psfs
 
     def get_varying_psf(self, coords, area_elements):
         # area_elements: batch, x, y
@@ -162,9 +161,9 @@ class NEURALBDModule(LightningModule):
         convolved_diff = (convolved_pred - convolved_true) ** 2
         # convolved_diff: batch, n_images, channels
         # weight: n_images
-        image_loss = (convolved_diff * self.weights[None, :, None]).sum(1) / self.weights.sum()
-        image_loss = image_loss.mean()
-        # image_loss = torch.mean(convolved_diff)
+        # image_loss = (convolved_diff * self.weights[None, :, None]).sum(1) / self.weights.sum()
+        # image_loss = image_loss.mean()
+        image_loss = torch.mean(convolved_diff)
         return image_loss
 
     def configure_optimizers(self):
@@ -218,24 +217,34 @@ class NEURALBDModule(LightningModule):
 
         vmin_pred, vmax_pred = np.min(image_pred), np.max(image_pred)
         image_pred = (image_pred - vmin_pred) / (vmax_pred - vmin_pred)
+        image_pred = (image_pred - vmin_pred) / (vmax_pred - vmin_pred)
 
         self._plot_deconvolution(convolved_true, image_pred)
         self._plot_convolved(convolved_true, convolved_pred)
         self._plot_psfs(psfs_pred)
 
+        # save PSFs and images
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
+            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_wvlnth2'
+            np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
+            np.save(gregor_save_path + '/conv_true.npy', convolved_true)
+            np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
 
         if self.muram is not None:
             self._plot_deconvolution_muram(image_pred, self.muram)
-            np.save('/gpfs/data/fs71254/schirni/NeuralBD_muram/image_pred.npy', image_pred)
-            np.save('/gpfs/data/fs71254/schirni/NeuralBD_muram/psfs_pred.npy', psfs_pred)
-            np.save('/gpfs/data/fs71254/schirni/NeuralBD_muram/convolved_true.npy', convolved_true)
-            np.save('/gpfs/data/fs71254/schirni/NeuralBD_muram/convolved_pred.npy', convolved_pred)
-            np.save('/gpfs/data/fs71254/schirni/NeuralBD_muram/muram.npy', self.muram)
+            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_256_noise2'
+            np.save(save_path + '/psfs_pred.npy', psfs_pred)
+            np.save(save_path + '/psfs_true.npy', self.kl_psfs)
+            np.save(save_path + '/conv_true.npy', convolved_true)
+            np.save(save_path + '/conv_pred.npy', convolved_pred)
 
-        if self.kl_psfs is not None:
             self._plot_kl_psfs(self.kl_psfs, psfs_pred)
+
+        dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_quiet'
+        np.save(dkist_save_path + '/psfs_pred.npy', psfs_pred)
+        np.save(dkist_save_path + '/conv_true.npy', convolved_true)
+        np.save(dkist_save_path + '/conv_pred.npy', convolved_pred)
 
     def _plot_deconvolution(self, convolved_true, image_pred):
         n_channels = convolved_true.shape[-1]
@@ -248,7 +257,7 @@ class NEURALBDModule(LightningModule):
             # fig.colorbar(im1, ax=cax1)
 
             ax = axs[1, i]
-            ax.imshow(image_pred[:, :, i], cmap='gray', origin='lower')
+            ax.imshow(image_pred[:, :, i], cmap='gray', origin='lower', vmin=0, vmax=1)
             # divider2 = make_axes_locatable(axs[1, 1])
             # cax2 = divider2.append_axes("right", size="5%", pad="2%")
             # fig.colorbar(im2, ax=cax2)
@@ -271,7 +280,7 @@ class NEURALBDModule(LightningModule):
             ax.imshow(speckle[:, :, i], cmap='gray', origin='lower', vmin=0, vmax=1)
 
             ax = axs[1, i]
-            ax.imshow(image_pred[:, :, i], cmap='gray', origin='lower')
+            ax.imshow(image_pred[:, :, i], cmap='gray', origin='lower', vmin=0, vmax=1)
         axs[0, 0].set_ylabel('Speckle')
         axs[1, 0].set_ylabel('Deconvolved')
         [axs[0, i].set_title(f'Channel {i:01d}') for i in range(n_channels)]
@@ -281,18 +290,12 @@ class NEURALBDModule(LightningModule):
         plt.close()
 
     def _plot_deconvolution_muram(self, image_pred, muram):
-        n_channels = image_pred.shape[-1]
-        fig, axs = plt.subplots(2, n_channels, figsize=(3 * n_channels, 4), dpi=300)
-        for i in range(n_channels):
-            ax = axs[0, i]
-            ax.imshow(muram[:, :, i], cmap='gray', origin='lower', vmin=0, vmax=1)
+        fig, axs = plt.subplots(1, 2, figsize=(8, 4), dpi=300)
+        axs[0].imshow(muram[:, :, 0], cmap='gray', origin='lower', vmin=0, vmax=1)
+        axs[1].imshow(image_pred[:, :, 0], cmap='gray', origin='lower', vmin=0, vmax=1)
 
-            ax = axs[1, i]
-            ax.imshow(image_pred[:, :, i], cmap='gray', origin='lower', vmin=0, vmax=1)
-
-        axs[0, 0].set_ylabel('Muram')
-        axs[1, 0].set_ylabel('Deconvolved')
-        [axs[0, i].set_title(f'Channel {i:01d}') for i in range(n_channels)]
+        axs[0].set_title('Muram')
+        axs[1].set_title('Deconvolved')
 
         fig.tight_layout()
         wandb.log({'Deconvolution - Muram': fig})
@@ -312,7 +315,7 @@ class NEURALBDModule(LightningModule):
                 # fig.colorbar(im1, ax=cax1)
 
                 ax = axs[1, i]
-                ax.imshow(convolved_pred[:, :, i, c], cmap='gray', origin='lower')
+                ax.imshow(convolved_pred[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=1)
                 # divider2 = make_axes_locatable(axs[1, n_samples-1])
                 # cax2 = divider2.append_axes("right", size="5%", pad="2%")
                 # fig.colorbar(im2, ax=cax2)
