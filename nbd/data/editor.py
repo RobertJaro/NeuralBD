@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-import cv2
+from scipy.signal import convolve2d
 import numpy as np
 import torch
 from astropy import units as u
@@ -9,6 +9,7 @@ from scipy.ndimage import shift
 from skimage import filters
 from sunpy.coordinates import frames
 from sunpy.map import Map, make_fitswcs_header
+import torch.nn.functional as F
 
 from nbd.data.KL_modes import KL
 
@@ -53,18 +54,19 @@ class ReadSimulationEditor(Editor):
 def PSF(complx_pupil):
     PSF = torch.fft.ifftshift(torch.fft.fft2(torch.fft.fftshift(complx_pupil)))
     PSF = (torch.abs(PSF)) ** 2  # or PSF*PSF.conjugate()
-    # PSF = PSF/ torch.sum(PSF, dim=(0, 1))  #normalizing the PSF
+    PSF = PSF / torch.sum(PSF, dim=(0, 1))  #normalizing the PSF
     return PSF
 
 
 def get_KL_basis(n_modes_max, size):
     kl = KL()
-    KL_modes = kl.precalculate_covariance(npix_image=size, n_modes_max=n_modes_max, first_noll=2)
+    KL_modes = kl.precalculate_covariance(npix_image=size, n_modes_max=n_modes_max, first_noll=1)
+    KL_modes /= np.max(np.abs(KL_modes), axis=(1, 2), keepdims=True)
     KL_modes = torch.tensor(KL_modes, dtype=torch.float32)
     return KL_modes
 
 
-def get_KL_wavefront(KL_modes, n_modes_max, n_images, coef_range=2):
+def get_KL_wavefront(KL_modes, n_modes_max, n_images, coef_range=2.0):
     coef = torch.FloatTensor(n_images, n_modes_max).uniform_(-coef_range, coef_range)
     # coef = torch.FloatTensor(n_images, n_modes_max).uniform_(0, 1)
     KL_wavefront = torch.einsum('kij,lk->lij', KL_modes, coef)
@@ -73,17 +75,54 @@ def get_KL_wavefront(KL_modes, n_modes_max, n_images, coef_range=2):
 
 def generate_PSFs(wavefront, n_images):
     PSFS = torch.stack([PSF(torch.exp(1j * wavefront[i, :, :])) for i in range(n_images)], -1)
-    PSFS = PSFS / (torch.sum(PSFS, dim=(0, 1), keepdim=True))
+    #PSFS = PSFS / (torch.sum(PSFS, dim=(0, 1), keepdim=True))
     return PSFS
 
 
 def get_convolution(simulation, psfs, n_images, noise=False):
-    convolved_images = np.stack([cv2.filter2D(simulation[..., 0], -1, psfs[:, :, i].numpy()) for i in range(n_images)],
+    convolved_images = np.stack([convolve2d(simulation[..., 0], psfs[:, :, i], boundary='symm', mode='same') for i in range(n_images)],
                                 -1)
     if noise:
         noise = np.random.normal(1, 0.005, size=convolved_images.shape)
+        noise = (noise - noise.min()) / (noise.max() - noise.min()) * 0.1
         convolved_images += noise
     convolved_images = np.stack([convolved_images, convolved_images], -1)
+    return convolved_images
+
+def get_convolution_einsum(simulation, psfs, n_images, noise=False):
+    """
+    simulation: torch.Tensor of shape (H, W, 1)
+    psfs: torch.Tensor of shape (kH, kW, n_images)
+    """
+    H, W, _ = simulation.shape
+    kH, kW, _ = psfs.shape
+    pad_h, pad_w = kH // 2, kW // 2
+
+    # Convert simulation to shape (1, 1, H, W)
+    simulation = simulation.permute(2, 0, 1).unsqueeze(0)  # shape: (1, 1, H, W)
+
+    # Apply symmetric (reflect) padding
+    simulation = F.pad(simulation, (pad_w, pad_w, pad_h, pad_h), mode='reflect')
+
+    # Unfold into sliding patches: shape (1, kH*kW, L)
+    patches = F.unfold(simulation, kernel_size=(kH, kW))  # No padding here
+
+    # Reshape PSFs to (n_images, kH*kW)
+    psfs_flat = psfs.reshape(-1, n_images).T  # (n_images, kH*kW)
+
+    # Convolve using einsum
+    convolved = torch.einsum('ik,bkl->bil', psfs_flat, patches)  # (n_images, L)
+
+    # Reshape back to (n_images, H, W)
+    convolved_images = convolved.view(n_images, H, W).permute(1, 2, 0)  # (H, W, n_images)
+
+    if noise:
+        noise_tensor = torch.normal(1.0, 0.005, size=convolved_images.shape, device=convolved_images.device)
+        convolved_images = convolved_images * noise_tensor
+
+    # Duplicate across last dim
+    convolved_images = torch.stack([convolved_images, convolved_images], dim=-1)  # (H, W, n_images, 2)
+
     return convolved_images
 
 
@@ -94,7 +133,7 @@ def compute_rms_contrast(image):
 
 
 def cutout(image, x, y, size):
-    return image[x - size // 2:x + size // 2, y - size // 2:y + size // 2, :]
+    return image[x - size // 2:x + size // 2, y - size // 2:y + size // 2, :, 0]
 
 
 def get_filtered(image, cutoffs, squared_butterworth=True, order=3.0, npad=0):
@@ -213,4 +252,12 @@ def gaussian_psf(size, sigma, n_images):
     X, Y = np.meshgrid(x, y)
     psf = np.exp(-(X ** 2 + Y ** 2) / (2 * sigma ** 2))
     psf = np.stack([psf] * n_images, axis=-1)  # Stack for n_images
+    return psf
+
+def generate_gaussian_psf(size, sigma):
+    """Generate a 2D Gaussian PSF of given size and sigma using NumPy only."""
+    ax = np.arange(-size // 2 + 1, size // 2 + 1)
+    xx, yy = np.meshgrid(ax, ax)
+    psf = np.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
+    psf /= np.sum(psf)  # Normalize to make it a proper PSF
     return psf
