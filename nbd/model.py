@@ -32,6 +32,23 @@ class GaussianPositionalEncoding(nn.Module):
         encoded = torch.cat([x, torch.sin(encoded), torch.cos(encoded)], -1)
         return encoded
 
+class SymmetricBoundaryEncoding(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.min_val = 0.0
+        self.max_val = 128 / 511.5
+
+    def forward(self, coords):
+        # Apply sinus symmetric boundary mapping
+        # Normalize input to [0, π] before applying sinusoidal transformation
+        norm_coords = (coords - self.min_val) / (self.max_val - self.min_val)
+        # x = torch.cos(norm_coords[..., 0] * np.pi)
+        # y = torch.cos(norm_coords[..., 1] * np.pi)
+        # coords = torch.stack([x, y], dim=-1)
+        norm_coords = norm_coords * np.pi
+        coords = torch.cos(norm_coords)
+        return coords
+
 
 class Sine(nn.Module):
     def __init__(self, w0=1.):
@@ -44,11 +61,12 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 4):
+    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 2):
         super().__init__()
+        self.symm_encoding = SymmetricBoundaryEncoding()
+
         if posencoding:
             posenc = GaussianPositionalEncoding(2, scale=posenc_scale)
-            # posenc = PositionalEncoding(2, min_freq=0, max_freq=8)
             d_in = nn.Linear(posenc.d_output, dim)
             self.d_in = nn.Sequential(posenc, d_in)
         else:
@@ -60,6 +78,7 @@ class ImageModel(nn.Module):
         self.activation = Sine()
 
     def forward(self, coords):
+        #x = self.symm_encoding(coords)
         x = self.activation(self.d_in(coords))
 
         for l in self.layers:
