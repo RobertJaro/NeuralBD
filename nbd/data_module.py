@@ -1,11 +1,12 @@
 import multiprocessing as mp
 import os
+import random
 
 import numpy as np
 import torch
 from astropy.io import fits
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 from tqdm import tqdm
 
 from nbd.data.editor import get_KL_basis, get_KL_wavefront, generate_PSFs, ReadSimulationEditor, get_convolution, \
@@ -19,8 +20,8 @@ class NeuralBDDataModule(LightningDataModule):
 
         data_set_type = dataset_config.pop('type')
         if data_set_type.upper() == 'GREGOR':
-            self.train_dataset = GREGORDataset(**dataset_config, shuffle=True)
-            self.valid_dataset = GREGORDataset(**dataset_config, shuffle=False)
+            self.train_dataset = GREGORDataset(**dataset_config, random_sampling=True)
+            self.valid_dataset = GREGORDataset(**dataset_config, random_sampling=False)
 
             self.contrast_weights = self.train_dataset.image_contrast
             self.img_coords = self.train_dataset.image_coordinates
@@ -44,11 +45,11 @@ class NeuralBDDataModule(LightningDataModule):
             raise ValueError('Unknown data type')
 
     def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=None, num_workers=self.num_workers)
+        loader = DataLoader(self.train_dataset, batch_size=64, num_workers=self.num_workers)
         return loader
 
     def val_dataloader(self):
-        loader = DataLoader(self.valid_dataset, batch_size=None, num_workers=self.num_workers)
+        loader = DataLoader(self.valid_dataset, batch_size=64, num_workers=self.num_workers)
         return loader
 
 
@@ -105,11 +106,10 @@ class MURAMDataset(TensorDataset):
         super().__init__(image_tensor, coordinates_tensor)
 
 
-class GREGORDataset(TensorDataset):
+class GREGORDataset(Dataset):
 
     def __init__(self, data_path, n_images, pixel_per_ds, x_crop=None, y_crop=None, crop_size=None, filter=False,
-                 cutoff_freq=None,
-                 shuffle=True, batch_size=1024, **kwargs):
+                 cutoff_freq=None, patch_size=(9, 9), random_sampling=True, n_patches=10000, **kwargs):
 
         # Load data
         fits_array = []
@@ -119,7 +119,7 @@ class GREGORDataset(TensorDataset):
             fits_header.append(fits.getheader(data_path, i))
         h, w = fits_array[0].shape
         fits_array = np.stack(fits_array, -1).reshape((h, w, 100, 2))
-        fits_array = fits_array[..., 1]  # remove the second channel
+        fits_array = fits_array[..., 0]  # remove the second channel
 
         # Apply low-pass filter
         if filter:
@@ -179,24 +179,47 @@ class GREGORDataset(TensorDataset):
 
         # Create dataset
         image_coordinates = np.stack(np.mgrid[:images.shape[0], :images.shape[1]], -1)
-        self.image_coordinates = image_coordinates / pixel_per_ds
+        image_coordinates = image_coordinates / pixel_per_ds
 
-        # apply binning and cropping
-        # x_start, x_end, y_start, y_end = crop if crop else (0, -1, 0, -1)
-        # image_coordinates = image_coordinates[x_start:x_end:bin, y_start:y_end:bin]
-        coordinates_tensor = torch.from_numpy(self.image_coordinates).float().view(-1, 2)
-        image_tensor = torch.from_numpy(images).float().reshape(-1, n_images, 2)
+        # Save processed data
+        self.images = images  # shape [H, W, n_images, 2]
+        self.image_coordinates = image_coordinates  # shape [H, W, 2]
+        self.patch_size = patch_size
+        self.H, self.W = images.shape[:2]
 
-        if shuffle:
-            r = torch.randperm(len(image_tensor))
-            image_tensor = image_tensor[r]
-            coordinates_tensor = coordinates_tensor[r]
+        self.random_sampling = random_sampling
+        self.n_patches = n_patches  # only used if random_sampling=True
 
-        # split into batches
-        image_tensor = image_tensor.view(-1, batch_size, n_images, 2)
-        coordinates_tensor = coordinates_tensor.view(-1, batch_size, 2)
+        if not random_sampling:
+            # exhaustive sliding window
+            self.n_patches_x = self.H - patch_size[0] + 1
+            self.n_patches_y = self.W - patch_size[1] + 1
+            self.total_patches = self.n_patches_x * self.n_patches_y
+        else:
+            self.total_patches = n_patches  # number of random samples per epoch
 
-        super().__init__(image_tensor, coordinates_tensor)
+        super().__init__()
+
+    def __len__(self):
+        return self.total_patches
+
+    def __getitem__(self, index):
+        px, py = self.patch_size
+
+        if self.random_sampling:
+            # sample random top-left corner
+            ix = random.randint(0, self.H - px)
+            iy = random.randint(0, self.W - py)
+        else:
+            # deterministic sliding window
+            ix = index // self.n_patches_y
+            iy = index % self.n_patches_y
+
+        # Extract patch
+        image_patch = self.images[ix:ix + px, iy:iy + py, :, :]  # [px, py, n_images, 2]
+        coord_patch = self.image_coordinates[ix:ix + px, iy:iy + py, :]  # [px, py, 2]
+
+        return (torch.from_numpy(image_patch).float(), torch.from_numpy(coord_patch).float())
 
 
 class DKISTDataset(TensorDataset):
