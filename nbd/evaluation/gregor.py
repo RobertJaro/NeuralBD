@@ -10,7 +10,7 @@ from astropy.io import fits
 
 from nbd.data.editor import cutout
 from nbd.evaluation.loader import NBDOutput
-from nbd.evaluation.psd import power_spectrum
+from nbd.evaluation.psd import power_spectrum, azimuthal_power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and Gregor data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
@@ -20,7 +20,7 @@ args = parser.parse_args()
 
 
 base_path = args.base_path
-plot_path = base_path + '/plots'
+plot_path = base_path + '/plots_crop2'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.0276 # arcsec/pixel
@@ -36,7 +36,7 @@ for i in range(2):
     fits_array_speckle.append(fits.getdata(args.speckle, i))
 fits_array_speckle = np.stack(fits_array_speckle, -1)
 fits_array_speckle_crop = cutout(fits_array_speckle[:, :, :, None], 962, 964, reconstructed_pred.shape[0])
-speckle = fits_array_speckle_crop[..., 1]
+speckle = fits_array_speckle_crop[..., 0]
 vmin, vmax = speckle.min(), speckle.max()
 speckle = (speckle - vmin) / (vmax - vmin)
 
@@ -53,12 +53,12 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 #convolved_true = convolved_true[50:-50, 50:-50, :, :]
 #convolved_pred = convolved_pred[50:-50, 50:-50, :, :]
 
-#reconstructed_pred = reconstructed_pred[120:220, 30:130, :]
-#speckle = speckle[118:218, 30:130]
-#convolved_true = convolved_true[120:220, 30:130, :, :]
-#convolved_pred = convolved_pred[120:220, 30:130, :, :]
+reconstructed_pred = reconstructed_pred[120:220, 30:130, :]
+speckle = speckle[118:218, 30:130]
+convolved_true = convolved_true[120:220, 30:130, :, :]
+convolved_pred = convolved_pred[120:220, 30:130, :, :]
 
-# reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
+reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_pred[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
@@ -93,7 +93,7 @@ def _plot_hist(speckle, nbd, bins, name=None):
     plt.close()
 
 def _plot_image(x, y, name=None):
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5), dpi=300)
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5), dpi=300) # cmap='yohkohsxtal'
 
     # Display images and keep references for colorbars
     im0 = ax[0].imshow(x, cmap='yohkohsxtal', origin='lower',
@@ -195,11 +195,11 @@ def _plot_convolved(convolved_true, convolved_pred):
     for c in range(n_channels):
         for i in range(n_samples):
             ax = axs[0, i]
-            ax.imshow(convolved_true[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=1, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
+            ax.imshow(convolved_true[:, :, i, c], cmap='yohkohsxtal', origin='lower', vmin=0, vmax=1, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
             ax.tick_params(axis='both', which='major', labelsize=15)
             [axis.set_yticks([]) for axis in axs[0, 1:i+1]]
             ax = axs[1, i]
-            ax.imshow(convolved_pred[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=1, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
+            ax.imshow(convolved_pred[:, :, i, c], cmap='yohkohsxtal', origin='lower', vmin=0, vmax=1, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
             ax.tick_params(axis='both', which='major', labelsize=15)
             [axis.set_yticks([]) for axis in axs[1, 1:i+1]]
             [axs[0, i].set_title(f'Frame {i:01d}') for i in range(n_samples)]
@@ -240,11 +240,11 @@ def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
     axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='Speckle', color='black')
     axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
-    axs.set_xlabel('Spatial frequency [1/Mm]', fontsize=17)
+    axs.set_xlabel('Spatial frequency [1/arcsec]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
-    #axs.set_xlim(0, 10)
+    axs.set_xlim(0, 25)
     plt.tight_layout()
     plt.savefig(plot_path + '/psd.jpg')
 

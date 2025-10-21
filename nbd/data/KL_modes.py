@@ -177,12 +177,12 @@ if (__name__ == '__main__'):
 
     tmp = KL()
 
-    tmp.precalculate_covariance(npix_image=128, n_modes_max=44, first_noll=3)
+    tmp.precalculate_covariance(npix_image=128, n_modes_max=44, first_noll=1)
 
-    f, ax = pl.subplots(nrows=4, ncols=4)
-    for i in range(16):
-        ax.flat[i].imshow(tmp.KL[i, :, :])
-    pl.show()
+    #f, ax = pl.subplots(nrows=4, ncols=4)
+    #for i in range(16):
+    #    ax.flat[i].imshow(tmp.KL[i, :, :])
+    #pl.show()
 
     mat = np.zeros((20, 20))
     for i in range(20):

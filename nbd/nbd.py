@@ -226,7 +226,7 @@ class NEURALBDModule(LightningModule):
         # save PSFs and images
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
-            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_wvlnth2'
+            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_varying_1024'
             np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
             np.save(gregor_save_path + '/conv_true.npy', convolved_true)
             np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)

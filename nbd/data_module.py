@@ -128,7 +128,7 @@ class GREGORDataset(TensorDataset):
             fits_array = fits_array[0]
 
         # apply shift to align images
-        max_shift = 300
+        max_shift = 800
 
         print('Aligning images...')
         with mp.Pool(mp.cpu_count()) as pool:

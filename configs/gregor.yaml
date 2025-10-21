@@ -1,4 +1,4 @@
-base_dir: /gpfs/data/fs71254/schirni/NeuralBD_default_psf_align_channel0
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/GREGOR_varying_1024
 data:
   type: 'GREGOR'
   data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
@@ -6,17 +6,18 @@ data:
   pixel_per_ds: 511.5
   x_crop: 964
   y_crop: 964
-  crop_size: 128
-  psf_type: 'default'
+  crop_size: 1024
+  psf_type: 'varying'
 
 logging:
   project: NeuralBD
   name: GREGOR
 
 training:
-  epochs: 50000
+  epochs: 10000
   log_every_n_steps: 100
-  name: GREGOR
+  name: GREGOR_varying
+  check_val_every_n_epoch: 10
 model:
   dim: 512
   posencoding: True

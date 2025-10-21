@@ -9,7 +9,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from nbd.data.editor import cutout
 from nbd.evaluation.loader import NBDOutput
-from nbd.evaluation.psd import power_spectrum
+from nbd.evaluation.psd import power_spectrum, azimuthal_power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and DKIST data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
@@ -17,7 +17,7 @@ parser.add_argument('--base_path', type=str, help='the path to the base director
 args = parser.parse_args()
 
 base_path = args.base_path
-plot_path = base_path + '/plots'
+plot_path = base_path + '/plots_crop4'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.011 # arcsec/pixel
@@ -31,7 +31,7 @@ nbd_mean = reconstructed_pred.mean()
 
 dkist_rec = np.load('/gpfs/data/fs71254/schirni/DKIST/recon.1370.npz')
 dkist_rec = dkist_rec['rec']
-dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 512) # ss: 3000, 3000; penumbra: 1500, 2500
+dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 1024) # ss: 3000, 3000; penumbra: 1500, 2500
 vmin, vmax = dkist_rec.min(), dkist_rec.max()
 dkist_rec = (dkist_rec - vmin) / (vmax - vmin)  # normalize to [0, 1]
 dkist_mean = dkist_rec.mean()
@@ -47,10 +47,10 @@ convolved_true = np.load(base_path+'/conv_true.npy')
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
 
 # crop
-#reconstructed_pred = reconstructed_pred[230:290, 230:290, :] # 50:-50, 50:-50
-#dkist_rec = dkist_rec[225:285, 215:275, :]
-#convolved_true = convolved_true[230:290, 230:290, :, :]
-#convolved_pred = convolved_pred[100:420, 100:420, :, :]
+#reconstructed_pred = reconstructed_pred[100:-100, 100:-100, :] # 50:-50, 50:-50
+#dkist_rec = dkist_rec[100:-100, 100:-100, :]
+#convolved_true = convolved_true[100:-100, 100:-100, :, :]
+#convolved_pred = convolved_pred[100:-100, 100:-100, :, :]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
@@ -196,13 +196,13 @@ def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
     axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='Speckle', color='black')
     axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
-    axs.set_xlabel('Spatial frequency [1/Mm]', fontsize=17)
+    axs.set_xlabel('Spatial frequency [1/arcsec]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
     axs.set_xlim(0, 63)
     plt.tight_layout()
-    plt.savefig(plot_path + '/psd.jpg')
+    plt.savefig(plot_path + '/psd_azmth.jpg')
 
 def _plot_hist(speckle, nbd, bins, name=None):
     fig, ax = plt.subplots(1, 1, figsize=(10, 5), dpi=300)
