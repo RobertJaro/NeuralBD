@@ -61,7 +61,7 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 2):
+    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 3): # 2.0 ** 2
         super().__init__()
         self.symm_encoding = SymmetricBoundaryEncoding()
 
