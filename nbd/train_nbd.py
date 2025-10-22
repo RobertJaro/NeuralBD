@@ -52,6 +52,7 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'], weights=data_module.contrast_weights, speckle=data_module.speckle,
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
+            psf_size=data_module.psf_size,
             **config['model'])
 
     elif data_config['type'] == 'MURAM':
