@@ -20,7 +20,7 @@ args = parser.parse_args()
 
 
 base_path = args.base_path
-plot_path = base_path + '/plots'
+plot_path = base_path + '/plots2_crop1'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.0276 # arcsec/pixel
@@ -36,7 +36,7 @@ for i in range(2):
     fits_array_speckle.append(fits.getdata(args.speckle, i))
 fits_array_speckle = np.stack(fits_array_speckle, -1)
 fits_array_speckle_crop = cutout(fits_array_speckle[:, :, :, None], 962, 964, reconstructed_pred.shape[0])
-speckle = fits_array_speckle_crop[..., 1]
+speckle = fits_array_speckle_crop[..., 0]
 vmin, vmax = speckle.min(), speckle.max()
 speckle = (speckle - vmin) / (vmax - vmin)
 
@@ -48,17 +48,17 @@ convolved_true = np.load(base_path+'/conv_true.npy')
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
 
 # crop
-#reconstructed_pred = reconstructed_pred[50:-50, 50:-50, :] # 50:-50, 50:-50
-#speckle = speckle[48:-52, 50:-50]
-#convolved_true = convolved_true[50:-50, 50:-50, :, :]
-#convolved_pred = convolved_pred[50:-50, 50:-50, :, :]
+reconstructed_pred = reconstructed_pred[200:-200, 200:-200, :] # 50:-50, 50:-50
+speckle = speckle[198:-202, 200:-200]
+convolved_true = convolved_true[200:-200, 200:-200, :, :]
+convolved_pred = convolved_pred[200:-200, 200:-200, :, :]
 
 #reconstructed_pred = reconstructed_pred[120:220, 30:130, :]
 #speckle = speckle[118:218, 30:130]
 #convolved_true = convolved_true[120:220, 30:130, :, :]
 #convolved_pred = convolved_pred[120:220, 30:130, :, :]
 
-# reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
+reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_pred[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
@@ -240,11 +240,11 @@ def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
     axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='Speckle', color='black')
     axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
-    axs.set_xlabel('Spatial frequency [1/Mm]', fontsize=17)
+    axs.set_xlabel('Spatial frequency [1/arcsec]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
-    #axs.set_xlim(0, 10)
+    axs.set_xlim(0, 25)
     plt.tight_layout()
     plt.savefig(plot_path + '/psd.jpg')
 
