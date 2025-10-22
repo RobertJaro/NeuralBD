@@ -68,13 +68,15 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'],
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
+            psf_size=data_module.psf_size,
             **config['model'])
 
     else:
         raise ValueError('Unknown data type')
 
     checkpoint_callback = ModelCheckpoint(dirpath=base_dir,
-                                          every_n_epochs=training_config['checkpoint_every_n_epochs'] if 'checkpoint_every_n_epochs' in training_config else 5,
+                                          every_n_epochs=training_config[
+                                              'checkpoint_every_n_epochs'] if 'checkpoint_every_n_epochs' in training_config else 5,
                                           save_last=True)
 
     # Callbacks
@@ -82,6 +84,7 @@ if __name__ == '__main__':
 
     # save callback
     save_path = os.path.join(base_dir, 'neuralbd.nbd')
+
 
     def save(*args, **kwargs):
         torch.save({
@@ -102,6 +105,6 @@ if __name__ == '__main__':
                       strategy='dp' if N_GPUS > 1 else None,  # ddp breaks memory and wandb
                       num_sanity_val_steps=-1,
                       check_val_every_n_epoch=10,
-                      callbacks=[lr_monitor, checkpoint_callback, save_callback],)
+                      callbacks=[lr_monitor, checkpoint_callback, save_callback], )
     trainer.fit(neuralbd, data_module, ckpt_path=ckpt_path)
-    #trainer.save_checkpoint(os.path.join(base_dir, 'final.ckpt'))
+    # trainer.save_checkpoint(os.path.join(base_dir, 'final.ckpt'))
