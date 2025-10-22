@@ -14,7 +14,7 @@ from nbd.model import ImageModel, PSFModel
 
 class NEURALBDModule(LightningModule):
 
-    def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(29, 29),
+    def __init__(self, images_shape, pixel_per_ds, psf_size, learning_rate=1e-4,
                  model_config=None, weights=None, lr_config=None, speckle=None, muram=None,
                  psf=None, psf_type='default', **kwargs):
         super().__init__()
@@ -72,12 +72,11 @@ class NEURALBDModule(LightningModule):
         # Expand according to PSF: batch, px + offset, py + offset, 2
 
         # add random shift to PSF coordinates
-        psf_coords = self.psf_coords[None, :, :, :]  # --> 1, x, y, 2
-        psf_coords = psf_coords.repeat(coords.shape[0], 1, 1, 1)  # --> batch, x, y, 2
+        psf_coords = self.psf_coords  # --> x, y, 2
 
         # calculate shift max between coordinate points
-        dx_max = (psf_coords[0, 0, 0, 0] - psf_coords[0, 1, 0, 0]) / 2
-        dy_max = (psf_coords[0, 0, 0, 1] - psf_coords[0, 0, 1, 1]) / 2
+        dx_max = (psf_coords[0, 0, 0] - psf_coords[1, 0, 0]) / 2
+        dy_max = (psf_coords[0, 0, 1] - psf_coords[0, 1, 1]) / 2
 
         # initialize random shifts per point
         d_rand = torch.rand_like(psf_coords)
@@ -88,53 +87,57 @@ class NEURALBDModule(LightningModule):
         d_rand[..., 1] = d_rand[..., 1] * dy_max
 
         # apply random shifts
-        psf_coords = psf_coords + d_rand  # --> batch, x, y, 2
+        psf_coords = psf_coords + d_rand  # --> x, y, 2
 
         # compute area elements
-        dx = torch.gradient(psf_coords[..., 0], dim=1)[0]
-        dy = torch.gradient(psf_coords[..., 1], dim=2)[0]
-        area_elements = dx * dy  # --> batch, x, y
+        dx = torch.gradient(psf_coords[..., 0], dim=0)[0]
+        dy = torch.gradient(psf_coords[..., 1], dim=1)[0]
+        area_elements = dx * dy  # --> x, y
+
+        dx_max = (coords[:, 1, 0, 0] - coords[:, 0, 0, 0]) / 2
+        dy_max = (coords[:, 0, 1, 1] - coords[:, 0, 0, 1]) / 2
+        coords[..., 0] = coords[..., 0] + dx_max[:, None, None]
+        coords[..., 1] = coords[..., 1] + dy_max[:, None, None]
 
         # load the PSF
         # psf: batch, x, y, n_images
         if self.psf_type == 'default':
-            psf = self.get_psf(area_elements)
+            psf = self.get_psf(None)
         elif self.psf_type == 'varying':
             psf = self.get_varying_psf(coords, area_elements)
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
+        # coords: batch, px + psf_x - 1, py + psf_x - 1, 2
         image = self.image_model(coords)
         # image:  batch, xy(PSF), channels
         # flat_psf: batch, xy(PSF) , n_images
         # area_elements: batch, xy(PSF), 1
-        B, Px, Py, C = image.shape
-        _, Kx, Ky, N = psf.shape
         image = image.permute(0, 3, 1, 2)
-        psf = psf.permute(0, 3, 1, 2).unsqueeze(2).repeat(1, 1, C, 1, 1)
-        psf = psf.reshape(B * N * C, 1, Kx, Ky)
-        image = image.reshape(1, B*C, Px, Py)
-        convolved_images = F.conv2d(image, psf, groups=B*C, padding='same')
-        convolved_images = convolved_images.view(B, N, C, Px, Py)
+        psf = psf.permute(2, 0, 1)
+        psf = psf[:, None, :, :]
+        convolved_images = [F.conv2d(image[:, i:i+1], psf, groups=1, padding='valid') for i in range(image.shape[1])]
+        convolved_images = torch.stack(convolved_images, dim=2)
         convolved_images = convolved_images.permute(0, 3, 4, 1, 2)
         # convolved_images: batch, n_images, channels
 
         return convolved_images
 
     def get_psf(self, area_elements=None):
-        # area_elements: batch, x, y
+        # area_elements: x, y
         # self.log_psfs: x, y, n_images
         psfs = torch.exp(self.log_psfs)  # --> x, y, n_images
+
         # kl_psfs = self.kl_psfs.to(self.log_psfs.device)
         # Normalize PSFs
         if area_elements is None:
             norm = psfs.sum(dim=(0, 1), keepdim=True)
             # kl_psfs = kl_psfs
         else:
-            norm = (psfs[None, :, :, :] * area_elements[:, :, :, None]).sum(dim=(1, 2),
-                                                                            keepdim=True)  # --> batch, 1, 1, n_images
+            psfs = psfs * area_elements[:, :, None]
+            norm = psfs.sum(dim=(0, 1), keepdim=True)  # --> 1, 1, n_images
             # kl_psfs = kl_psfs[None, :, :, :] * area_elements[:, :, :, None]
-        return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
+        return psfs  / (norm + 1e-8)  # --> x, y, n_images
         # return kl_psfs
 
     def get_varying_psf(self, coords, area_elements):
@@ -224,7 +227,7 @@ class NEURALBDModule(LightningModule):
         # save PSFs and images
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
-            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_256_scaling'
+            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_psf51'
             np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
             np.save(gregor_save_path + '/conv_true.npy', convolved_true)
             np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
