@@ -14,7 +14,7 @@ from nbd.data.editor import get_KL_basis, get_KL_wavefront, generate_PSFs, ReadS
 
 
 class NeuralBDDataModule(LightningDataModule):
-    def __init__(self, num_workers=4, psf_size=(51, 51), **dataset_config):
+    def __init__(self, num_workers=4, psf_size=(29, 29), **dataset_config):
         super().__init__()
         self.num_workers = num_workers
 
@@ -219,9 +219,8 @@ class GREGORDataset(Dataset):
 
 class DKISTDataset(TensorDataset):
 
-    def __init__(self, data_path, n_images, pixel_per_ds, x_crop=None, y_crop=None, crop_size=None, filter=False,
-                 cutoff_freq=None,
-                 shuffle=True, batch_size=1024, **kwargs):
+    def __init__(self, data_path, n_images, pixel_per_ds, psf_size, x_crop=None, y_crop=None, crop_size=None,
+                 patch_size=(128, 128), random_sampling=True, n_patches=10000, **kwargs):
         # Load data
         dkist = np.load(data_path)
         dkist_array = dkist['cobs']  # [n_images, h, w]
@@ -265,22 +264,41 @@ class DKISTDataset(TensorDataset):
         images = dkist_array
 
         # Create dataset
-        image_coordinates = np.stack(np.mgrid[:images.shape[0], :images.shape[1]], -1)
-        self.image_coordinates = image_coordinates / pixel_per_ds
+        self.psf_pad_x = psf_size[0] // 2
+        self.psf_pad_y = psf_size[1] // 2
+        image_coordinates = np.stack(np.mgrid[
+                                         -self.psf_pad_x:images.shape[0] + self.psf_pad_x, -self.psf_pad_y:images.shape[
+                                                                                                               1] + self.psf_pad_y],
+                                     -1)
+        image_coordinates = image_coordinates / pixel_per_ds
 
-        # apply binning and cropping
-        # x_start, x_end, y_start, y_end = crop if crop else (0, -1, 0, -1)
-        # image_coordinates = image_coordinates[x_start:x_end:bin, y_start:y_end:bin]
-        coordinates_tensor = torch.from_numpy(self.image_coordinates).float().view(-1, 2)
-        image_tensor = torch.from_numpy(images).float().reshape(-1, n_images, 2)
+        # Save processed data
+        self.images = images  # shape [x, y, n_images, 2]
+        self.image_coordinates = image_coordinates  # shape [x, y, 2]
+        self.patch_size = patch_size
+        self.image_shape = images.shape[:2]
 
-        if shuffle:
-            r = torch.randperm(len(image_tensor))
-            image_tensor = image_tensor[r]
-            coordinates_tensor = coordinates_tensor[r]
+        self.random_sampling = random_sampling
+        self.n_patches = n_patches  # only used if random_sampling=True
 
-        # split into batches
-        image_tensor = image_tensor.view(-1, batch_size, n_images, 2)
-        coordinates_tensor = coordinates_tensor.view(-1, batch_size, 2)
+        patch_coords = [(i, j)
+                        for i in range(self.image_shape[0] - patch_size[0])
+                        for j in range(self.image_shape[1] - patch_size[1])]
+        self.patch_coords = patch_coords
 
-        super().__init__(image_tensor, coordinates_tensor)
+        super().__init__()
+
+    def __len__(self):
+        return len(self.patch_coords)
+
+    def __getitem__(self, index):
+        px, py = self.patch_size[0], self.patch_size[1]
+        ix, iy = self.patch_coords[index]
+        psf_pad_x = self.psf_pad_x
+        psf_pad_y = self.psf_pad_y
+
+        # Extract patch
+        image_patch = self.images[ix:ix + px, iy:iy + py, :, :]  # [px, py, n_images, 2]
+        coord_patch = self.image_coordinates[ix:ix + px + psf_pad_x * 2, iy:iy + py + psf_pad_y * 2, :]  # [px, py, 2]
+
+        return torch.tensor(image_patch, dtype=torch.float32), torch.tensor(coord_patch, dtype=torch.float32)
