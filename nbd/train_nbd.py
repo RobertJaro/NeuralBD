@@ -70,8 +70,24 @@ if __name__ == '__main__':
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
             **config['model'])
 
+    elif data_config['type'] == 'KSO':
+        neuralbd = NEURALBDModule(
+            images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
+            pixel_per_ds=data_config['pixel_per_ds'],
+            sampling=data_config['psf_type'],
+            psf_type=data_config['psf_type'],
+            **config['model'])
+
     else:
         raise ValueError('Unknown data type')
+
+    if config['meta_state'] == 'loadme':
+        meta_model_path = config['base_dir']+'/meta_model.pth'
+        meta_ckpt = torch.load(meta_model_path, map_location='cpu')
+        neuralbd.image_model.load_state_dict(meta_ckpt)
+        print(f"Loaded meta model from {meta_model_path}")
+    else:
+        print("No meta model loaded.")
 
     checkpoint_callback = ModelCheckpoint(dirpath=base_dir,
                                           every_n_epochs=training_config['checkpoint_every_n_epochs'] if 'checkpoint_every_n_epochs' in training_config else 5,
