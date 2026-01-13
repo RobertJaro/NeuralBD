@@ -20,7 +20,7 @@ args = parser.parse_args()
 
 
 base_path = args.base_path
-plot_path = base_path + '/plots_crop2'
+plot_path = base_path + '/plots/mean_norm'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.0276 # arcsec/pixel
@@ -30,38 +30,42 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
+reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 # speckle = neuralbd.speckle
 fits_array_speckle = []
 for i in range(2):
     fits_array_speckle.append(fits.getdata(args.speckle, i))
 fits_array_speckle = np.stack(fits_array_speckle, -1)
 fits_array_speckle_crop = cutout(fits_array_speckle[:, :, :, None], 962, 964, reconstructed_pred.shape[0])
-speckle = fits_array_speckle_crop[..., 0]
+speckle = fits_array_speckle_crop[..., 1]
 vmin, vmax = speckle.min(), speckle.max()
 speckle = (speckle - vmin) / (vmax - vmin)
+speckle = speckle / speckle.mean()
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
+convolved_true = convolved_true / convolved_true.mean()
+
 # load psfs
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
 
 # crop
-#reconstructed_pred = reconstructed_pred[50:-50, 50:-50, :] # 50:-50, 50:-50
-#speckle = speckle[48:-52, 50:-50]
-#convolved_true = convolved_true[50:-50, 50:-50, :, :]
-#convolved_pred = convolved_pred[50:-50, 50:-50, :, :]
+#reconstructed_pred = reconstructed_pred[500:-400, 500:-400, :] # 50:-50, 50:-50
+#speckle = speckle[498:-402, 500:-400]
+#convolved_true = convolved_true[500:-400, 500:-400, :, :]
+#convolved_pred = convolved_pred[500:-400, 500:-400, :, :]
 
-reconstructed_pred = reconstructed_pred[120:220, 30:130, :]
-speckle = speckle[118:218, 30:130]
-convolved_true = convolved_true[120:220, 30:130, :, :]
-convolved_pred = convolved_pred[120:220, 30:130, :, :]
+#reconstructed_pred = reconstructed_pred[150:190, 65:105, :]
+#speckle = speckle[160:200, 72:112]
+#convolved_true = convolved_true[150:190, 65:105, :, :]
+#convolved_pred = convolved_pred[150:190, 65:105, :, :]
 
-reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
+# reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
 
 # calculate power spectral density
-k_frame, psd_frame = power_spectrum(convolved_pred[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
+k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
 k_muram, psd_muram = power_spectrum(speckle)
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
 
@@ -138,11 +142,11 @@ def _plot_conv_reconstructed(conv, nbd, speckle):
 
     # Show each image and keep the handle for colorbar
     im0 = ax[0].imshow(conv, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, conv.shape[0] * cdelt, 0, conv.shape[0] * cdelt], vmin=0, vmax=1)
+                       extent=[0, conv.shape[0] * cdelt, 0, conv.shape[0] * cdelt], vmin=0, vmax=2)
     im1 = ax[1].imshow(nbd, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, nbd.shape[0] * cdelt, 0, nbd.shape[0] * cdelt], vmin=0, vmax=1)
+                       extent=[0, nbd.shape[0] * cdelt, 0, nbd.shape[0] * cdelt], vmin=0, vmax=2)
     im2 = ax[2].imshow(speckle, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, speckle.shape[0] * cdelt, 0, speckle.shape[0] * cdelt], vmin=0, vmax=1)
+                       extent=[0, speckle.shape[0] * cdelt, 0, speckle.shape[0] * cdelt], vmin=0, vmax=2)
 
     # Set axis labels and titles
     [axs.set_xlabel('Distance [arcsec]', fontsize=20) for axs in ax]
@@ -211,7 +215,7 @@ def _plot_convolved(convolved_true, convolved_pred):
     plt.close()
 
 
-def _plot_psfs(psfs):
+def _plot_psfs(psfs, name=None):
     n_images = psfs.shape[-1]
     n_samples = min(5, n_images)
     fig, axs = plt.subplots(1, n_samples, figsize=(2.2 * n_samples, 4), dpi=300,
@@ -232,7 +236,7 @@ def _plot_psfs(psfs):
     cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
     cbar.ax.tick_params(labelsize=16)
     plt.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.15, wspace=0.3)
-    plt.savefig(plot_path + '/psfs_pred.jpg', bbox_inches='tight')
+    plt.savefig(plot_path + f'/psfs_{name}.jpg', bbox_inches='tight') if name else plt.savefig(plot_path + '/psfs.jpg', bbox_inches='tight')
     plt.close()
 
 def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
@@ -244,7 +248,7 @@ def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
-    axs.set_xlim(0, 25)
+    axs.set_xlim(0, 30)
     plt.tight_layout()
     plt.savefig(plot_path + '/psd.jpg')
 
