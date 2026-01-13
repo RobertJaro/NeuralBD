@@ -1,13 +1,13 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/DKIST_penumbra_scaling
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/DKIST_varying_2048
 data:
   type: 'DKIST'
   data_path: '/gpfs/data/fs71254/schirni/DKIST/1370.npz'
   n_images: 50
   pixel_per_ds: 511.5
-  x_crop: 1500
-  y_crop: 2500
-  crop_size: 512
-  psf_type: 'default'
+  x_crop: 2000
+  y_crop: 2000
+  crop_size: 2048
+  psf_type: 'varying'
 
 logging:
   project: NeuralBD
