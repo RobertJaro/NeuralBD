@@ -15,7 +15,7 @@ class NEURALBDModule(LightningModule):
 
     def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(29, 29),
                  model_config=None, weights=None, lr_config=None, speckle=None, muram=None,
-                 psf=None, psf_type='default', **kwargs):
+                 psf=None, raw_frame=None, psf_type='default', **kwargs):
         super().__init__()
         self.images_shape = images_shape
         self.n_images = self.images_shape[2]
@@ -24,6 +24,7 @@ class NEURALBDModule(LightningModule):
         self.muram = muram
         self.kl_psfs = psf
         self.psf_size = psf_size
+        self.raw_frame = raw_frame
 
         self.learning_rate = learning_rate
 
@@ -226,25 +227,29 @@ class NEURALBDModule(LightningModule):
         # save PSFs and images
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
-            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_varying_1024'
+            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_test'
             np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
             np.save(gregor_save_path + '/conv_true.npy', convolved_true)
             np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
 
-        if self.muram is not None:
+        elif self.muram is not None:
             self._plot_deconvolution_muram(image_pred, self.muram)
-            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_256_noise2'
+            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_block'
             np.save(save_path + '/psfs_pred.npy', psfs_pred)
             np.save(save_path + '/psfs_true.npy', self.kl_psfs)
             np.save(save_path + '/conv_true.npy', convolved_true)
             np.save(save_path + '/conv_pred.npy', convolved_pred)
 
             self._plot_kl_psfs(self.kl_psfs, psfs_pred)
-
-        dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_quiet'
-        np.save(dkist_save_path + '/psfs_pred.npy', psfs_pred)
-        np.save(dkist_save_path + '/conv_true.npy', convolved_true)
-        np.save(dkist_save_path + '/conv_pred.npy', convolved_pred)
+        else:
+            #dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_varying_2048'
+            #np.save(dkist_save_path + '/psfs_pred.npy', psfs_pred)
+            #np.save(dkist_save_path + '/conv_true.npy', convolved_true)
+            #np.save(dkist_save_path + '/conv_pred.npy', convolved_pred)
+            kso_save_path = '/gpfs/data/fs71254/schirni/nstack/training/KSO_raw'
+            np.save(kso_save_path + '/psfs_pred.npy', psfs_pred)
+            np.save(kso_save_path + '/conv_true.npy', convolved_true)
+            np.save(kso_save_path + '/conv_pred.npy', convolved_pred)
 
     def _plot_deconvolution(self, convolved_true, image_pred):
         n_channels = convolved_true.shape[-1]
