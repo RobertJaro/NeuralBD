@@ -1,20 +1,20 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_256_noise2
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_block
 data:
   type: 'MURAM'
   data_path: '/gpfs/data/fs71254/schirni/nstack/data/I_out_med.468000'
-  n_images: 50
+  n_images: 100
   pixel_per_ds: 511.5
   x_crop: 480
   y_crop: 350
-  crop_size: 256
-  psf_type: 'default'
+  crop_size: 1024
+  psf_type: 'varying'
 
 logging:
   project: NeuralBD
   name: MURAM
 
 training:
-  epochs: 20000
+  epochs: 10000
   log_every_n_steps: 100
   name: MURAM
   check_val_every_n_epoch: 10
