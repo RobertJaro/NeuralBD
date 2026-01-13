@@ -17,7 +17,7 @@ parser.add_argument('--base_path', type=str, help='the path to the base director
 args = parser.parse_args()
 
 base_path = args.base_path
-plot_path = base_path + '/plots_crop4'
+plot_path = base_path + '/plots/mean_norm'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.011 # arcsec/pixel
@@ -27,30 +27,44 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-nbd_mean = reconstructed_pred.mean()
+reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 
 dkist_rec = np.load('/gpfs/data/fs71254/schirni/DKIST/recon.1370.npz')
 dkist_rec = dkist_rec['rec']
-dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 1024) # ss: 3000, 3000; penumbra: 1500, 2500
+dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 512) # ss: 3000, 3000; penumbra: 1500, 2500
 vmin, vmax = dkist_rec.min(), dkist_rec.max()
 dkist_rec = (dkist_rec - vmin) / (vmax - vmin)  # normalize to [0, 1]
-dkist_mean = dkist_rec.mean()
+dkist_rec = dkist_rec / dkist_rec.mean()
 
 # shift mean
-reconstructed_pred = reconstructed_pred - nbd_mean + dkist_mean
+# reconstructed_pred = reconstructed_pred - nbd_mean + dkist_mean
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
+convolved_true = convolved_true / convolved_true.mean()
+
 # load psfs
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
 
-# crop
-#reconstructed_pred = reconstructed_pred[100:-100, 100:-100, :] # 50:-50, 50:-50
-#dkist_rec = dkist_rec[100:-100, 100:-100, :]
-#convolved_true = convolved_true[100:-100, 100:-100, :, :]
-#convolved_pred = convolved_pred[100:-100, 100:-100, :, :]
+# crop2
+#reconstructed_pred = reconstructed_pred[900:1100, 900:1100, :]
+#dkist_rec = dkist_rec[900:1100, 895:1095, :]
+#convolved_true = convolved_true[900:1100, 900:1100, :, :]
+#convolved_pred = convolved_pred[900:1100, 900:1100, :, :]
+
+# crop3
+#reconstructed_pred = reconstructed_pred[1600:1900, 1600:1900, :]
+#dkist_rec = dkist_rec[1600:1900, 1595:1895, :]
+#convolved_true = convolved_true[1600:1900, 1600:1900, :, :]
+#convolved_pred = convolved_pred[1600:1900, 1600:1900, :, :]
+
+# crop4
+#reconstructed_pred = reconstructed_pred[300:1000, 300:1000, :]
+#dkist_rec = dkist_rec[300:1000, 295:995, :]
+#convolved_true = convolved_true[300:1000, 300:1000, :, :]
+#convolved_pred = convolved_pred[300:1000, 300:1000, :, :]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
@@ -106,13 +120,13 @@ def _plot_frame_nbd_speckle(x, y, z, name=None, title1="Frame", title2="NBD", ti
     # Display images
     im0 = ax[0].imshow(x, cmap='gray', origin='lower',
                        extent=[0, x.shape[0] * cdelt, 0, x.shape[1] * cdelt],
-                       vmin=0, vmax=1)
+                       vmin=0, vmax=3)
     im1 = ax[1].imshow(y, cmap='gray', origin='lower',
                        extent=[0, y.shape[0] * cdelt, 0, y.shape[1] * cdelt],
-                       vmin=0, vmax=1)
+                       vmin=0, vmax=3)
     im2 = ax[2].imshow(z, cmap='gray', origin='lower',
                        extent=[0, z.shape[0] * cdelt, 0, z.shape[1] * cdelt],
-                       vmin=0, vmax=1)
+                       vmin=0, vmax=3)
 
     # Axis labels and titles
     for axs in ax:
@@ -200,7 +214,7 @@ def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
-    axs.set_xlim(0, 63)
+    axs.set_xlim(0, 70)
     plt.tight_layout()
     plt.savefig(plot_path + '/psd_azmth.jpg')
 
@@ -217,6 +231,22 @@ def _plot_hist(speckle, nbd, bins, name=None):
     plt.savefig(plot_path+f'/hist_{name}.jpg') if name else plt.savefig(plot_path+'/hist.jpg')
     plt.close()
 
+def _plot_single_psf(psf, plot_path, name=None):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8), dpi=300)
+    norm = LogNorm(vmin=psf[psf > 0].min(), vmax=psf.max())
+    im = ax.imshow(psf, origin='lower', norm=norm, cmap='viridis')
+    ax.set_xlabel('X [pix]', fontsize=20)
+    ax.set_ylabel('Y [pix]', fontsize=20)
+    ax.tick_params(axis='both', which='major', labelsize=15)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label('Intensity', fontsize=40)
+    cbar.ax.tick_params(labelsize=40)
+    plt.tight_layout()
+    plt.savefig(plot_path + f'/single_psf_{name}.jpg') if name else plt.savefig(plot_path + '/single_psf.jpg')
+    plt.close()
+
 if __name__ == '__main__':
 
     _plot_image(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0])
@@ -228,3 +258,4 @@ if __name__ == '__main__':
 
     # plot psd
     _plot_psd(k_frame, psd_frame, k_speckle, psd_speckle, k_nbd, psd_nbd)
+    _plot_single_psf(psfs_pred[:, :, 0], plot_path='/gpfs/data/fs71254/schirni/nstack', name='example_psf')
