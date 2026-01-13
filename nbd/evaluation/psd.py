@@ -1,3 +1,11 @@
+"""
+This code reuses and adapts functionality from:
+
+Author(s): Andres Asnesio Ramos
+Repository: https://github.com/aasensio/neural-MFBD/
+File: az_average.py
+"""
+
 import numpy as np
 from scipy.stats import binned_statistic
 
