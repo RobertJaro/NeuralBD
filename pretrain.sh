@@ -10,4 +10,6 @@
 #SBATCH --output=/gpfs/data/fs71254/schirni/logs/log%j.log     # Standard output and error log
 
 cd /home/fs71254/schirni
-python -m nbd.pretrain --config '/home/fs71254/schirni/configs/kso.yaml'
+# python -m nbd.pretrain --config '/home/fs71254/schirni/configs/muram.yaml'
+# python -m nbd.pretrain --config '/home/fs71254/schirni/configs/kso.yaml'
+python -m nbd.pretrain --config '/home/fs71254/schirni/configs/gregor.yaml'

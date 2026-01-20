@@ -38,10 +38,6 @@ class NEURALBDModule(LightningModule):
         self.psf_coords = nn.Parameter(psf_coords, requires_grad=False)
 
         if self.psf_type == 'default':
-            # Create learnable PSFs
-            # log_psfs = torch.randn(*psf_size, self.n_images, dtype=torch.float32)
-            # self.log_psfs = nn.Parameter(log_psfs, requires_grad=True)
-
             # Create Gaussian PSFs
             log_psfs = gaussian_psf(psf_size, sigma=5, n_images=self.n_images)
             self.log_psfs = nn.Parameter(torch.tensor(log_psfs, dtype=torch.float32), requires_grad=True)
@@ -218,7 +214,6 @@ class NEURALBDModule(LightningModule):
 
         vmin_pred, vmax_pred = np.min(image_pred), np.max(image_pred)
         image_pred = (image_pred - vmin_pred) / (vmax_pred - vmin_pred)
-        image_pred = (image_pred - vmin_pred) / (vmax_pred - vmin_pred)
 
         self._plot_deconvolution(convolved_true, image_pred)
         self._plot_convolved(convolved_true, convolved_pred)
@@ -227,14 +222,14 @@ class NEURALBDModule(LightningModule):
         # save PSFs and images
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
-            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_test'
+            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_v2'
             np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
             np.save(gregor_save_path + '/conv_true.npy', convolved_true)
             np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
 
         elif self.muram is not None:
             self._plot_deconvolution_muram(image_pred, self.muram)
-            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_block'
+            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_pretrain_block'
             np.save(save_path + '/psfs_pred.npy', psfs_pred)
             np.save(save_path + '/psfs_true.npy', self.kl_psfs)
             np.save(save_path + '/conv_true.npy', convolved_true)
@@ -242,11 +237,11 @@ class NEURALBDModule(LightningModule):
 
             self._plot_kl_psfs(self.kl_psfs, psfs_pred)
         else:
-            #dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_varying_2048'
+            #dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_penumbra_v3'
             #np.save(dkist_save_path + '/psfs_pred.npy', psfs_pred)
             #np.save(dkist_save_path + '/conv_true.npy', convolved_true)
             #np.save(dkist_save_path + '/conv_pred.npy', convolved_pred)
-            kso_save_path = '/gpfs/data/fs71254/schirni/nstack/training/KSO_raw'
+            kso_save_path = '/gpfs/data/fs71254/schirni/nstack/training/KSO_2023_final'
             np.save(kso_save_path + '/psfs_pred.npy', psfs_pred)
             np.save(kso_save_path + '/conv_true.npy', convolved_true)
             np.save(kso_save_path + '/conv_pred.npy', convolved_pred)

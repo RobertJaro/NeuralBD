@@ -94,7 +94,7 @@ class MURAMDataset(TensorDataset):
         # images = get_convolution(self.high_quality, self.kl_psfs, n_images, noise=False)
         images = np.load("/gpfs/data/fs71254/schirni/nstack/data/block_psf_convolved_100.npy")
         images = np.stack([images, images], -1)
-        self.image_mean = np.mean(images, axis=2)
+        self.image_mean = images[:, :, 0, :]
 
         # Normalize images
         # vmin, vmax = images.min(), images.max()
@@ -225,24 +225,24 @@ class DKISTDataset(TensorDataset):
         dkist_array = dkist_array.transpose(1, 2, 0)  # [h, w, n_images]
 
         # apply shift to align images
-        # max_shift = 30
+        max_shift = 650
 
-        # print('Aligning images...')
-        # with mp.Pool(mp.cpu_count()) as pool:
-        #    shifts = list(tqdm(pool.starmap(optimize_shift,
-        #                                    [(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                    y_crop - max_shift:y_crop + crop_size + max_shift, 0],
-        #                                      dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                      y_crop - max_shift:y_crop + crop_size + max_shift, i])
-        #                                     for i in range(n_images)]), total=n_images))
+        print('Aligning images...')
+        with mp.Pool(mp.cpu_count()) as pool:
+            shifts = list(tqdm(pool.starmap(optimize_shift,
+                                            [(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                            y_crop - max_shift:y_crop + crop_size + max_shift, 0],
+                                              dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                              y_crop - max_shift:y_crop + crop_size + max_shift, i])
+                                             for i in range(n_images)]), total=n_images))
 
-        # dkist_array = np.stack([shift_image(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        # y_crop - max_shift:y_crop + crop_size + max_shift, i],
-        #                                    shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
+        dkist_array = np.stack([shift_image(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+        y_crop - max_shift:y_crop + crop_size + max_shift, i],
+                                            shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
 
         # Crop images
-        # dkist_array = cutout(dkist_array[..., None], max_shift, max_shift, crop_size)
-        dkist_array = cutout(dkist_array[..., None], x_crop, y_crop, crop_size)
+        dkist_array = cutout(dkist_array[..., None], max_shift, max_shift, crop_size)
+        # dkist_array = cutout(dkist_array[..., None], x_crop, y_crop, crop_size)
 
         # Normalize images
         vmin, vmax = dkist_array.min(), dkist_array.max()
@@ -260,7 +260,7 @@ class DKISTDataset(TensorDataset):
         dkist_array = np.stack([dkist_array, dkist_array], -1)
 
         images = dkist_array
-        self.image_mean = np.mean(images, axis=2)
+        self.image_mean = images[:, :, 0, :]
 
         # Create dataset
         image_coordinates = np.stack(np.mgrid[:images.shape[0], :images.shape[1]], -1)
@@ -288,7 +288,6 @@ class KSODataset(TensorDataset):
 
     def __init__(self, data_path, n_images, pixel_per_ds,
                  shuffle=True, batch_size=1024, **kwargs):
-
         # Load data
         fits_array = np.load(data_path)
 

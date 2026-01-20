@@ -9,4 +9,4 @@
 #SBATCH --output=/gpfs/data/fs71254/schirni/logs/log%j.log     # Standard output and error log
 
 cd /home/fs71254/schirni
-python -m nbd.data.spatially_varying_psfs --out_file "/gpfs/data/fs71254/schirni/nstack/data/convolved_image_000.npy"
+python -m nbd.data.spatially_varying_psfs --out_file "/gpfs/data/fs71254/schirni/nstack/data/convolved_image_256.npy"

@@ -1,4 +1,5 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/GREGOR_varying_1024
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/GREGOR_v2
+meta_state: 'loadme'
 data:
   type: 'GREGOR'
   data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
@@ -6,8 +7,8 @@ data:
   pixel_per_ds: 511.5
   x_crop: 964
   y_crop: 964
-  crop_size: 1024
-  psf_type: 'varying'
+  crop_size: 256
+  psf_type: 'default'
 
 logging:
   project: NeuralBD

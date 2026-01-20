@@ -1,8 +1,8 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/KSO_raw
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/KSO_2023_final
 meta_state: 'loadme'
 data:
   type: 'KSO'
-  data_path: '/gpfs/data/fs71254/schirni/nstack/data/kso_45s.npy'
+  data_path: '/gpfs/data/fs71254/schirni/nstack/data/kso_2023_50s.npy'
   n_images: 178
   pixel_per_ds: 511.5
   x_crop: 964

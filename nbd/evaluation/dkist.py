@@ -17,7 +17,7 @@ parser.add_argument('--base_path', type=str, help='the path to the base director
 args = parser.parse_args()
 
 base_path = args.base_path
-plot_path = base_path + '/plots/mean_norm'
+plot_path = base_path + '/plots_crop2'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.011 # arcsec/pixel
@@ -27,26 +27,32 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
+# reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 
 dkist_rec = np.load('/gpfs/data/fs71254/schirni/DKIST/recon.1370.npz')
 dkist_rec = dkist_rec['rec']
 dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 512) # ss: 3000, 3000; penumbra: 1500, 2500
 vmin, vmax = dkist_rec.min(), dkist_rec.max()
 dkist_rec = (dkist_rec - vmin) / (vmax - vmin)  # normalize to [0, 1]
-dkist_rec = dkist_rec / dkist_rec.mean()
+# dkist_rec = dkist_rec / dkist_rec.mean()
 
 # shift mean
-# reconstructed_pred = reconstructed_pred - nbd_mean + dkist_mean
+reconstructed_pred = reconstructed_pred - reconstructed_pred.mean() + dkist_rec.mean()
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
-convolved_true = convolved_true / convolved_true.mean()
+# convolved_true = convolved_true / convolved_true.mean()
 
 # load psfs
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
+
+# crop1
+reconstructed_pred = reconstructed_pred[180:330, 180:330, :]
+dkist_rec = dkist_rec[180:330, 175:325, :]
+convolved_true = convolved_true[180:330, 180:330, :, :]
+convolved_pred = convolved_pred[180:330, 180:330, :, :]
 
 # crop2
 #reconstructed_pred = reconstructed_pred[900:1100, 900:1100, :]
@@ -65,6 +71,22 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 #dkist_rec = dkist_rec[300:1000, 295:995, :]
 #convolved_true = convolved_true[300:1000, 300:1000, :, :]
 #convolved_pred = convolved_pred[300:1000, 300:1000, :, :]
+
+# crop penumbra
+#reconstructed_pred = reconstructed_pred[260:772, 1260:1772, :]
+#dkist_rec = dkist_rec[900:1100, 895:1095, :]
+#convolved_true = convolved_true[260:772, 1260:1772, :, :]
+#convolved_pred = convolved_pred[260:772, 1260:1772, :, :]
+
+# crop penumbra sub arcsec
+#reconstructed_pred = reconstructed_pred[170:340, 170:340, :]
+#dkist_rec = dkist_rec[160:330, 160:330, :]
+#convolved_true = convolved_true[170:340, 170:340, :, :]
+#convolved_pred = convolved_pred[170:340, 170:340, :, :]
+
+# shift mean
+reconstructed_pred = reconstructed_pred - reconstructed_pred.mean() + dkist_rec.mean()
+convolved_true = convolved_true - convolved_true.mean() + dkist_rec.mean()
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
@@ -120,13 +142,13 @@ def _plot_frame_nbd_speckle(x, y, z, name=None, title1="Frame", title2="NBD", ti
     # Display images
     im0 = ax[0].imshow(x, cmap='gray', origin='lower',
                        extent=[0, x.shape[0] * cdelt, 0, x.shape[1] * cdelt],
-                       vmin=0, vmax=3)
+                       vmin=0, vmax=1)
     im1 = ax[1].imshow(y, cmap='gray', origin='lower',
                        extent=[0, y.shape[0] * cdelt, 0, y.shape[1] * cdelt],
-                       vmin=0, vmax=3)
+                       vmin=0, vmax=1)
     im2 = ax[2].imshow(z, cmap='gray', origin='lower',
                        extent=[0, z.shape[0] * cdelt, 0, z.shape[1] * cdelt],
-                       vmin=0, vmax=3)
+                       vmin=0, vmax=1)
 
     # Axis labels and titles
     for axs in ax:

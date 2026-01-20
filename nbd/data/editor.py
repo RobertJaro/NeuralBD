@@ -253,11 +253,3 @@ def gaussian_psf(size, sigma, n_images):
     psf = np.exp(-(X ** 2 + Y ** 2) / (2 * sigma ** 2))
     psf = np.stack([psf] * n_images, axis=-1)  # Stack for n_images
     return psf
-
-def generate_gaussian_psf(size, sigma):
-    """Generate a 2D Gaussian PSF of given size and sigma using NumPy only."""
-    ax = np.arange(-size // 2 + 1, size // 2 + 1)
-    xx, yy = np.meshgrid(ax, ax)
-    psf = np.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
-    psf /= np.sum(psf)  # Normalize to make it a proper PSF
-    return psf

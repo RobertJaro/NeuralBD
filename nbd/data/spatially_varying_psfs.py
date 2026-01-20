@@ -88,7 +88,7 @@ class SpatiallyVaryingConvolution:
         return output, psfs_all
 
 class Convolver:
-    def __init__(self, image, psf_size=(29, 29), n_modes=44, coef_range=2.0, variation_range=64):
+    def __init__(self, image, psf_size=(29, 29), n_modes=44, coef_range=2.0, variation_range=256):
         self.image = image
 
         self.psf_size = psf_size

@@ -15,15 +15,13 @@ from skimage.restoration import richardson_lucy
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and Muram data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
-parser.add_argument('--muram', type=str, help='the path to the muram simulation')
 
 args = parser.parse_args()
 
 
 base_path = args.base_path
-data_path = args.muram
 
-plot_path = base_path + '/plots_scatter'
+plot_path = base_path + '/plots'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 96 # km/pixel
@@ -36,21 +34,21 @@ neuralbd = NBDOutput(model_path)
 reconstructed_pred = neuralbd.load_reconstructed_img()
 
 
-muram = ReadSimulationEditor().call(data_path)
+muram = ReadSimulationEditor().call('/gpfs/data/fs71254/schirni/nstack/data/I_out_med.468000')
 sim_array = muram.data
 
 vmin, vmax = np.min(sim_array), np.max(sim_array)
 sim_array = (sim_array - vmin) / (vmax - vmin)
 
 sim_array = np.stack([sim_array, sim_array], -1)
-sim_array = cutout(sim_array[..., None], 332, 332, reconstructed_pred.shape[0]) # 478, 349, 256 # old: 332, 332, 256
+#sim_array = cutout(sim_array[..., None], 332, 332, reconstructed_pred.shape[0]) # 478, 349, 256 # old: 332, 332, 256
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
 # remove 10% of the intensity from sim_array from recontructed_pred
-reconstructed_pred = reconstructed_pred * 0.9
+# reconstructed_pred = reconstructed_pred * 0.9
 # reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + sim_array.mean()
 
 # load psfs
@@ -58,7 +56,7 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 psfs_true = np.load(base_path+'/psfs_true.npy')
 
 # perform richardson lucy deconvolution on convolved images
-rl_reconstruction = richardson_lucy(convolved_true[:, :, 0, 0], psfs_true[:, :, 0], num_iter=1000)
+# rl_reconstruction = richardson_lucy(convolved_true[:, :, 0, 0], psfs_true[:, :, 0], num_iter=1000)
 
 # crop sim array and reconstructed and convolved images
 crop_param = 120
@@ -68,11 +66,11 @@ crop_param = 120
 #convolved_true = convolved_true[crop_param:-crop_param, crop_param:-crop_param, :, :]
 
 # RL plot
-sim_array = sim_array[58:138, 58:138 :]
-reconstructed_pred = reconstructed_pred[60:140, 60:140, :]
-convolved_pred = convolved_pred[60:140, 60:140, :, :]
-convolved_true = convolved_true[60:140, 60:140, :, :]
-rl_reconstruction = rl_reconstruction[55:135, 55:135]
+#sim_array = sim_array[58:138, 58:138 :]
+#reconstructed_pred = reconstructed_pred[60:140, 60:140, :]
+#convolved_pred = convolved_pred[60:140, 60:140, :, :]
+#convolved_true = convolved_true[60:140, 60:140, :, :]
+# rl_reconstruction = rl_reconstruction[55:135, 55:135]
 
 # quiet
 #sim_array = sim_array[8:78, 8:78 :]
@@ -99,7 +97,7 @@ rl_reconstruction = rl_reconstruction[55:135, 55:135]
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)
 k_muram, psd_muram = power_spectrum(sim_array[:, :, 0])
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
-k_rl, psd_rl = power_spectrum(rl_reconstruction)
+# k_rl, psd_rl = power_spectrum(rl_reconstruction)
 
 
 def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
@@ -154,8 +152,8 @@ def _plot_image(x, y, name=None):
                        extent=[0, x.shape[0] * cdelt, 0, y.shape[0] * cdelt], vmin=0, vmax=0.7)
 
     # Labels and titles
-    [axs.set_xlabel('Distance [arcsec]', fontsize=20) for axs in ax]
-    ax[0].set_ylabel('Distance [arcsec]', fontsize=20)
+    [axs.set_xlabel('Distance [Mm]', fontsize=20) for axs in ax]
+    ax[0].set_ylabel('Distance [Mm]', fontsize=20)
     ax[1].set_yticks([])
     ax[0].set_title('MuRAM', fontsize=20, fontweight='bold')
     ax[1].set_title('NBD', fontsize=20, fontweight='bold')
@@ -487,14 +485,14 @@ if __name__ == '__main__':
     #_plot_difference_map(sim_array[:, :, 0], rl_reconstruction, name='sim_rl_diff')
 
     _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd)
-    _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, name='psd_rl')
+    #_plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, name='psd_rl')
 
-    _plot_images(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='sim_rl_reconstruction')
+    #_plot_images(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='sim_rl_reconstruction')
 
-    _plot_scatter(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
-    _plot_2d_hist(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='nbd')
-    _plot_2d_hist(sim_array[:, :, 0], rl_reconstruction, name='rl')
-    _plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='nbd_rl')
+    #_plot_scatter(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
+    #_plot_2d_hist(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='nbd')
+    #_plot_2d_hist(sim_array[:, :, 0], rl_reconstruction, name='rl')
+    #_plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='nbd_rl')
 
     #mse_reconstructed = mse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     #rmse_reconstructed = rmse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])

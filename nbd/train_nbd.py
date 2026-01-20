@@ -116,8 +116,8 @@ if __name__ == '__main__':
                       devices=N_GPUS,
                       accelerator='gpu' if N_GPUS >= 1 else None,
                       strategy='dp' if N_GPUS > 1 else None,  # ddp breaks memory and wandb
-                      num_sanity_val_steps=-1,
-                      check_val_every_n_epoch=10,
+                      num_sanity_val_steps=0,
+                      check_val_every_n_epoch=1,
                       callbacks=[lr_monitor, checkpoint_callback, save_callback],)
     trainer.fit(neuralbd, data_module, ckpt_path=ckpt_path)
     #trainer.save_checkpoint(os.path.join(base_dir, 'final.ckpt'))

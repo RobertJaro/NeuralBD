@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from nbd.data.editor import gaussian_psf
+
 
 class PositionalEncoding(nn.Module):
 
@@ -89,15 +91,20 @@ class ImageModel(nn.Module):
 
 class PSFModel(nn.Module):
 
-    def __init__(self, psf_shape, dim=64, n_layers=4):
+    def __init__(self, psf_shape, dim=128, n_layers=4, posencoding=True, posenc_scale=2.0 ** 3):
         super().__init__()
         self.psf_shape = psf_shape
         self.dim = dim
 
-        self.d_in = nn.Linear(2, dim)
+        if posencoding:
+            posenc = GaussianPositionalEncoding(2, scale=posenc_scale)
+            d_in = nn.Linear(posenc.d_output, dim)
+            self.d_in = nn.Sequential(posenc, d_in)
+        else:
+            self.d_in = nn.Linear(2, dim)
         lin = [nn.Linear(dim, dim) for _ in range(n_layers)]
         self.layers = nn.ModuleList(lin)
-        self.d_out = nn.Linear(dim, np.prod(psf_shape))
+        self.d_out = nn.Linear(dim, int(np.prod(psf_shape)))
         self.activation = Sine()
 
     def forward(self, coords):
@@ -107,4 +114,64 @@ class PSFModel(nn.Module):
             x = self.activation(l(x))
         x = self.d_out(x)
         x = x.reshape(-1, *self.psf_shape)
+        return x
+
+
+############ Autointegration ########################
+
+class GenericModel(nn.Module):
+
+    def __init__(self, in_dim, out_dim, dim=512, posencoding=True, posenc_scale=2.0 ** 2):
+        super().__init__()
+        self.symm_encoding = SymmetricBoundaryEncoding()
+
+        if posencoding:
+            posenc = GaussianPositionalEncoding(in_dim, scale=posenc_scale)
+            d_in = nn.Linear(posenc.d_output, dim)
+            self.d_in = nn.Sequential(posenc, d_in)
+        else:
+            self.d_in = nn.Linear(in_dim, dim)
+
+        lin = [nn.Linear(dim, dim) for _ in range(8)]
+        self.layers = nn.ModuleList(lin)
+        self.d_out = nn.Linear(dim, out_dim)
+        self.activation = Sine()
+
+    def forward(self, coords):
+        x = self.activation(self.d_in(coords))
+
+        for l in self.layers:
+            x = self.activation(l(x))
+        x = self.d_out(x)
+        return x
+
+
+class ObjectModel(GenericModel):
+
+    def __init__(self, **kwargs):
+        super().__init__(in_dim=2, out_dim=1, **kwargs)
+
+    def forward(self, coords):
+        x = super().forward(coords)
+        x = torch.exp(x)
+        return x
+
+class GModel(GenericModel):
+
+    def __init__(self, n_images, **kwargs):
+        super().__init__(in_dim=4, out_dim=n_images, **kwargs)
+
+    def forward(self, coords):
+        x = super().forward(coords)
+        x = torch.exp(x)
+        return x
+
+class PModel(GenericModel):
+
+    def __init__(self, n_images, **kwargs):
+        super().__init__(in_dim=4, out_dim=n_images, posencoding=False, **kwargs)
+
+    def forward(self, coords):
+        x = super().forward(coords)
+        x = torch.exp(x)
         return x

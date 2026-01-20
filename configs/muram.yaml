@@ -1,4 +1,5 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_block
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_varying_pretrain_block
+meta_state: 'loadme'
 data:
   type: 'MURAM'
   data_path: '/gpfs/data/fs71254/schirni/nstack/data/I_out_med.468000'

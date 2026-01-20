@@ -19,7 +19,7 @@ args = parser.parse_args()
 
 
 base_path = args.base_path
-plot_path = base_path + '/plots/final'
+plot_path = base_path + '/plots/crop7'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 1.04 # arcsec/pixel
@@ -42,10 +42,36 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 #convolved_true = convolved_true[700:-900, 1100:1548, :, :]
 #convolved_pred = convolved_pred[700:-900, 1100:1548, :, :]
 
-# crop2
-reconstructed_pred = reconstructed_pred[800:1050, 1150:1400, :]
-convolved_true = convolved_true[800:1050, 1150:1400, :, :]
-convolved_pred = convolved_pred[800:1050, 1150:1400, :, :]
+# crop2 ar
+#reconstructed_pred = reconstructed_pred[600:856, 980:1236, :]
+#convolved_true = convolved_true[600:856, 980:1236, :, :]
+#convolved_pred = convolved_pred[600:856, 980:1236, :, :]
+
+# crop3 ar
+#reconstructed_pred = reconstructed_pred[1300:1478, 850:1078, :]
+#convolved_true = convolved_true[1300:1478, 850:1078, :, :]
+#convolved_pred = convolved_pred[1300:1478, 850:1078, :, :]
+
+# crop4 ar
+#reconstructed_pred = reconstructed_pred[900:1350, 1600:2050, :]
+#convolved_true = convolved_true[900:1350, 1600:2050, :, :]
+#convolved_pred = convolved_pred[900:1350, 1600:2050, :, :]
+
+# crop5 ar
+#reconstructed_pred = reconstructed_pred[700:800, 980:1080, :]
+#convolved_true = convolved_true[700:800, 980:1080, :, :]
+#convolved_pred = convolved_pred[700:800, 980:1080, :, :]
+
+# crop6 ar
+#reconstructed_pred = reconstructed_pred[600:856, 750:1006, :]
+#convolved_true = convolved_true[600:856, 750:1006, :, :]
+#convolved_pred = convolved_pred[600:856, 750:1006, :, :]
+
+# crop7 ar
+reconstructed_pred = reconstructed_pred[700:800, 780:880, :]
+convolved_true = convolved_true[700:800, 780:880, :, :]
+convolved_pred = convolved_pred[700:800, 780:880, :, :]
+
 
 # crop3
 #reconstructed_pred = reconstructed_pred[900:950, 1250:1300, :]
@@ -61,6 +87,11 @@ convolved_pred = convolved_pred[800:1050, 1150:1400, :, :]
 #reconstructed_pred = reconstructed_pred[1000:1100, 50:150, :] # 50:-50, 50:-50
 #convolved_true = convolved_true[1000:1100, 50:150, :, :]
 #convolved_pred = convolved_pred[1000:1100, 50:150, :, :]
+
+# crop limb ar
+#reconstructed_pred = reconstructed_pred[750:1050, 50:350, :] # 50:-50, 50:-50
+#convolved_true = convolved_true[750:1050, 50:350, :, :]
+#convolved_pred = convolved_pred[750:1050, 50:350]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
