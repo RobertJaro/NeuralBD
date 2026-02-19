@@ -3,10 +3,12 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from astropy.io import fits
+import torchmfbd
 
 from nbd.data.editor import cutout
 from nbd.evaluation.loader import NBDOutput
@@ -20,7 +22,7 @@ args = parser.parse_args()
 
 
 base_path = args.base_path
-plot_path = base_path + '/plots/mean_norm'
+plot_path = base_path + '/plots/torchmfbd/crop1'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.0276 # arcsec/pixel
@@ -30,37 +32,68 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
+#reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 # speckle = neuralbd.speckle
 fits_array_speckle = []
 for i in range(2):
     fits_array_speckle.append(fits.getdata(args.speckle, i))
 fits_array_speckle = np.stack(fits_array_speckle, -1)
 fits_array_speckle_crop = cutout(fits_array_speckle[:, :, :, None], 962, 964, reconstructed_pred.shape[0])
-speckle = fits_array_speckle_crop[..., 1]
+speckle = fits_array_speckle_crop[..., 0]
 vmin, vmax = speckle.min(), speckle.max()
 speckle = (speckle - vmin) / (vmax - vmin)
-speckle = speckle / speckle.mean()
+#speckle = speckle / speckle.mean()
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
-convolved_true = convolved_true / convolved_true.mean()
+#convolved_true = convolved_true / convolved_true.mean()
 
 # load psfs
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
+
+# torchmfbd deconvolution
+
+frames = convolved_true[..., 0]
+frames = frames.transpose(2, 0, 1)  # (n_frames, height, width)
+frames = frames[None, :, :, :]  # (1, n_frames, height, width)
+frames_torchmfbd = torch.tensor(frames.astype('float32'))
+
+# Patchify and add the frames
+decSI = torchmfbd.Deconvolution('/home/fs71254/schirni/configs/torchmfbd_hifi.yaml')
+patchify = torchmfbd.Patchify4D()
+frames_patches = patchify.patchify(frames_torchmfbd, patch_size=64, stride_size=10, flatten_sequences=True)
+noise = torchmfbd.compute_noise(frames_patches[0:1, 0:1, ...])
+decSI.add_frames(frames_patches, id_object=0, id_diversity=0, diversity=0.0, sigma=noise)
+
+# Deconvolve
+decSI.deconvolve(infer_object=False, optimizer='adam', simultaneous_sequences=1000, n_iterations=500)
+
+# Unpatchify
+obj = patchify.unpatchify(decSI.obj[0], apodization=6, weight_type='cosine', weight_params=30).cpu().numpy()
+torch_mfbd = obj.transpose(1, 2, 0)
+torch_mfbd = (torch_mfbd - torch_mfbd.min()) / (torch_mfbd.max() - torch_mfbd.min())
+#torch_mfbd = torch_mfbd / torch_mfbd.mean()
 
 # crop
 #reconstructed_pred = reconstructed_pred[500:-400, 500:-400, :] # 50:-50, 50:-50
 #speckle = speckle[498:-402, 500:-400]
 #convolved_true = convolved_true[500:-400, 500:-400, :, :]
 #convolved_pred = convolved_pred[500:-400, 500:-400, :, :]
+#torch_mfbd = torch_mfbd[500:-400, 500:-400, :]
 
-#reconstructed_pred = reconstructed_pred[150:190, 65:105, :]
+reconstructed_pred = reconstructed_pred[120:220, 30:130, :]
+speckle = speckle[120:220, 30:130]
+convolved_true = convolved_true[120:220, 30:130, :, :]
+convolved_pred = convolved_pred[120:220, 30:130, :, :]
+torch_mfbd = torch_mfbd[113:213, 22:122, :]
+
+#reconstructed_pred = reconstructed_pred[160:200, 75:115, :]
 #speckle = speckle[160:200, 72:112]
-#convolved_true = convolved_true[150:190, 65:105, :, :]
+#convolved_true = convolved_true[160:200, 72:112, :, :] # 150:190, 65:105
 #convolved_pred = convolved_pred[150:190, 65:105, :, :]
+#torch_mfbd = torch_mfbd[155:195, 65:105, :]
 
 # reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
 
@@ -68,6 +101,7 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
 k_muram, psd_muram = power_spectrum(speckle)
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
+k_mfbd, psd_mfbd = power_spectrum(torch_mfbd[:, :, 0])
 
 
 def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
@@ -137,16 +171,16 @@ def _plot_image(x, y, name=None):
     plt.close()
 
 
-def _plot_conv_reconstructed(conv, nbd, speckle):
+def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     fig, ax = plt.subplots(1, 3, figsize=(15, 6), dpi=300)
 
     # Show each image and keep the handle for colorbar
     im0 = ax[0].imshow(conv, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, conv.shape[0] * cdelt, 0, conv.shape[0] * cdelt], vmin=0, vmax=2)
+                       extent=[0, conv.shape[0] * cdelt, 0, conv.shape[0] * cdelt], vmin=0, vmax=1)
     im1 = ax[1].imshow(nbd, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, nbd.shape[0] * cdelt, 0, nbd.shape[0] * cdelt], vmin=0, vmax=2)
+                       extent=[0, nbd.shape[0] * cdelt, 0, nbd.shape[0] * cdelt], vmin=0, vmax=1)
     im2 = ax[2].imshow(speckle, cmap='yohkohsxtal', origin='lower',
-                       extent=[0, speckle.shape[0] * cdelt, 0, speckle.shape[0] * cdelt], vmin=0, vmax=2)
+                       extent=[0, speckle.shape[0] * cdelt, 0, speckle.shape[0] * cdelt], vmin=0, vmax=1)
 
     # Set axis labels and titles
     [axs.set_xlabel('Distance [arcsec]', fontsize=20) for axs in ax]
@@ -172,7 +206,7 @@ def _plot_conv_reconstructed(conv, nbd, speckle):
         cbar.ax.tick_params(labelsize=18)
 
     plt.tight_layout()
-    plt.savefig(plot_path + '/conv_reconstructed.jpg')
+    plt.savefig(plot_path + '/conv_reconstructed.jpg' if not name else plot_path + f'/reconstructed_{name}.jpg')
     plt.close()
 
 def _plot_difference_map(x, y, name=None):
@@ -239,11 +273,12 @@ def _plot_psfs(psfs, name=None):
     plt.savefig(plot_path + f'/psfs_{name}.jpg', bbox_inches='tight') if name else plt.savefig(plot_path + '/psfs.jpg', bbox_inches='tight')
     plt.close()
 
-def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
+def _plot_psd(k1, psd1, k2, psd2, k3, psd3, k4, psd4):
     fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300)
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
     axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='Speckle', color='black')
     axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
+    axs.semilogy(k4 / cdelt, psd4 / psd4[0], label='torchmfbd', color='saddlebrown')
     axs.set_xlabel('Spatial frequency [1/arcsec]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
@@ -275,9 +310,11 @@ if __name__ == '__main__':
     _plot_hist(speckle, reconstructed_pred[:, :, 0], bins=bins)
     _plot_difference_map(speckle, reconstructed_pred[:, :, 0], name='speckle-nbd')
     _plot_image(speckle, reconstructed_pred[:, :, 0])
+    _plot_image(convolved_true[:, :, 0, 0], torch_mfbd[:, :, 0], name='conv_torchmfbd')
     _plot_convolved(convolved_true, convolved_pred)
     _plot_conv_reconstructed(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0], speckle)
+    _plot_conv_reconstructed(speckle, reconstructed_pred[:, :, 0], torch_mfbd[:, :, 0], name='torchmfbd')
     _plot_psfs(psfs_pred)
 
     # plot psd
-    _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd)
+    _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_mfbd, psd_mfbd)
