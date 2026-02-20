@@ -1,4 +1,5 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_model2e3
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/GREGOR_pretrained
+meta_state: 'loadme'
 data:
   type: 'GREGOR'
   data_path: '/gpfs/data/fs71254/schirni/Level1_Files/hifi_20220602_095015_sd.fts'
@@ -14,9 +15,10 @@ logging:
   name: GREGOR
 
 training:
-  epochs: 50000
+  epochs: 10000
   log_every_n_steps: 100
-  name: GREGOR
+  name: GREGOR_varying
+  check_val_every_n_epoch: 10
 model:
   dim: 512
   posencoding: True
