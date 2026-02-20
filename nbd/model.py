@@ -61,7 +61,7 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 3): # 2.0 ** 2
+    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 2):
         super().__init__()
         self.symm_encoding = SymmetricBoundaryEncoding()
 
@@ -89,19 +89,22 @@ class ImageModel(nn.Module):
 
 class PSFModel(nn.Module):
 
-    def __init__(self, psf_shape, dim=64, n_layers=4):
+    def __init__(self, psf_shape, dim=64, n_layers=4, posenc_scale=2.0 ** 2):
         super().__init__()
         self.psf_shape = psf_shape
         self.dim = dim
 
-        self.d_in = nn.Linear(2, dim)
+        self.posenc = GaussianPositionalEncoding(2, scale=posenc_scale)
+        self.d_in = nn.Linear(self.posenc.d_output, dim)
+        # self.d_in = nn.Linear(2, dim)
         lin = [nn.Linear(dim, dim) for _ in range(n_layers)]
         self.layers = nn.ModuleList(lin)
         self.d_out = nn.Linear(dim, np.prod(psf_shape))
         self.activation = Sine()
 
     def forward(self, coords):
-        x = self.activation(self.d_in(coords))
+        enc = self.posenc(coords)
+        x = self.activation(self.d_in(enc))
 
         for l in self.layers:
             x = self.activation(l(x))

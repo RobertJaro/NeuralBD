@@ -3,22 +3,24 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import torchmfbd
+import patchify
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-from nbd.data.editor import cutout, ReadSimulationEditor
-from nbd.evaluation.loader import NBDOutput
-from nbd.evaluation.psd import power_spectrum
 from skimage.metrics import structural_similarity as ssim
 from skimage.restoration import richardson_lucy
+
+from nbd.data.editor import ReadSimulationEditor, cutout
+from nbd.evaluation.loader import NBDOutput
+from nbd.evaluation.psd import power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and Muram data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
 parser.add_argument('--muram', type=str, help='the path to the muram simulation')
 
 args = parser.parse_args()
-
 
 base_path = args.base_path
 data_path = args.muram
@@ -29,12 +31,11 @@ os.makedirs(plot_path, exist_ok=True)
 cdelt = 96 # km/pixel
 cdelt = cdelt / 1000 # Mm/pixel
 
-model_path = base_path+'/neuralbd.nbd'
+model_path = base_path + '/neuralbd.nbd'
 neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-
 
 muram = ReadSimulationEditor().call(data_path)
 sim_array = muram.data
@@ -43,35 +44,56 @@ vmin, vmax = np.min(sim_array), np.max(sim_array)
 sim_array = (sim_array - vmin) / (vmax - vmin)
 
 sim_array = np.stack([sim_array, sim_array], -1)
-sim_array = cutout(sim_array[..., None], 478, 349, 256) # 478, 349, 256
+sim_array = cutout(sim_array[..., None], 400, 400, reconstructed_pred.shape[0]) # 478, 349, 256 # old: 332, 332, 256
 
 # load convolved images
-convolved_pred = np.load(base_path+'/conv_pred.npy')
-convolved_true = np.load(base_path+'/conv_true.npy')
+convolved_pred = np.load(base_path + '/conv_pred.npy')
+convolved_true = np.load(base_path + '/conv_true.npy')
+
+frames = convolved_true[..., 0]
+frames = frames.transpose(2, 0, 1)  # (n_frames, height, width)
+frames = frames[None, :, :, :]  # (1, n_frames, height, width)
+frames_torchmfbd = torch.tensor(frames.astype('float32'))
 
 # remove 10% of the intensity from sim_array from recontructed_pred
 reconstructed_pred = reconstructed_pred * 0.9
+# reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + sim_array.mean()
 
 # load psfs
-psfs_pred = np.load(base_path+'/psfs_pred.npy')
-psfs_true = np.load(base_path+'/psfs_true.npy')
+psfs_pred = np.load(base_path + '/psfs_pred.npy')
+psfs_true = np.load(base_path + '/psfs_true.npy')
 
 # perform richardson lucy deconvolution on convolved images
 rl_reconstruction = richardson_lucy(convolved_true[:, :, 0, 0], psfs_true[:, :, 0], num_iter=1000)
 
+# perform torchmfbd deconvolution
+decSI = torchmfbd.Deconvolution('/home/fs71254/schirni/configs/torchmfbd_muram.yaml')
+patchify = torchmfbd.Patchify4D()
+frames_patches = patchify.patchify(frames_torchmfbd, patch_size=32, stride_size=10, flatten_sequences=True)
+noise = torchmfbd.compute_noise(frames_patches[0:1, 0:1, ...])
+decSI.add_frames(frames_patches, id_object=0, id_diversity=0, diversity=0.0, sigma=noise)
+
+# Deconvolve
+decSI.deconvolve(infer_object=False, optimizer='adam', simultaneous_sequences=1000, n_iterations=50)
+
+true_object = patchify.unpatchify(decSI.obj[0], apodization=6, weight_type='cosine', weight_params=30).cpu().numpy()
+torch_mfbd = true_object.transpose(1, 2, 0)
+# torch_mfbd = torch_mfbd / torch_mfbd.mean()
+
 # crop sim array and reconstructed and convolved images
 crop_param = 120
-#sim_array = sim_array[crop_param:-crop_param, crop_param:-crop_param, :]
-#reconstructed_pred = reconstructed_pred[crop_param:-crop_param, crop_param:-crop_param, :]
-#convolved_pred = convolved_pred[crop_param:-crop_param, crop_param:-crop_param, :, :]
-#convolved_true = convolved_true[crop_param:-crop_param, crop_param:-crop_param, :, :]
+# sim_array = sim_array[crop_param:-crop_param, crop_param:-crop_param, :]
+# reconstructed_pred = reconstructed_pred[crop_param:-crop_param, crop_param:-crop_param, :]
+# convolved_pred = convolved_pred[crop_param:-crop_param, crop_param:-crop_param, :, :]
+# convolved_true = convolved_true[crop_param:-crop_param, crop_param:-crop_param, :, :]
 
 # RL plot
-#sim_array = sim_array[58:138, 58:138 :] #
+#sim_array = sim_array[58:138, 58:138 :]
 #reconstructed_pred = reconstructed_pred[60:140, 60:140, :]
 #convolved_pred = convolved_pred[60:140, 60:140, :, :]
 #convolved_true = convolved_true[60:140, 60:140, :, :]
 #rl_reconstruction = rl_reconstruction[55:135, 55:135]
+#torch_mfbd = torch_mfbd[50:130, 50:130 :]
 
 # quiet
 #sim_array = sim_array[8:78, 8:78 :]
@@ -88,17 +110,41 @@ crop_param = 120
 #rl_reconstruction = rl_reconstruction[110:180, 110:180]
 
 # umbra
-#sim_array = sim_array[158:228, 158:228, :]
-#reconstructed_pred = reconstructed_pred[160:230, 160:230, :]
-#convolved_pred = convolved_pred[160:230, 160:230, :, :]
-#convolved_true = convolved_true[160:230, 160:230, :, :]
-#rl_reconstruction = rl_reconstruction[160:230, 160:230]
+# sim_array = sim_array[158:228, 158:228, :]
+# reconstructed_pred = reconstructed_pred[160:230, 160:230, :]
+# convolved_pred = convolved_pred[160:230, 160:230, :, :]
+# convolved_true = convolved_true[160:230, 160:230, :, :]
+# rl_reconstruction = rl_reconstruction[160:230, 160:230]
+
+# crop spatially varying umbra
+#sim_array = sim_array[450:550, 450:550, :]
+#reconstructed_pred = reconstructed_pred[450:550, 450:550, :]
+#convolved_pred = convolved_pred[450:550, 450:550, :, :]
+#convolved_true = convolved_true[450:550, 450:550, :, :]
+#rl_reconstruction = rl_reconstruction[450:550, 450:550]
+
+# crop spatially varying penumbra
+sim_array = sim_array[300:556, 300:556, :]
+reconstructed_pred = reconstructed_pred[300:556, 300:556, :]
+convolved_pred = convolved_pred[300:556, 300:556, :, :]
+convolved_true = convolved_true[300:556, 300:556, :, :]
+rl_reconstruction = rl_reconstruction[300:556, 300:556]
+torch_mfbd = torch_mfbd[370:470, 370:470]
+
+# crop spatially varying penumbra
+#sim_array = sim_array[200:712, 200:712, :]
+#reconstructed_pred = reconstructed_pred[200:712, 200:712, :]
+#convolved_pred = convolved_pred[200:712, 200:712, :, :]
+#convolved_true = convolved_true[200:712, 200:712, :, :]
+#rl_reconstruction = rl_reconstruction[200:712, 200:712]
+#torch_mfbd = torch_mfbd[200:712, 200:712]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)
 k_muram, psd_muram = power_spectrum(sim_array[:, :, 0])
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
 k_rl, psd_rl = power_spectrum(rl_reconstruction)
+k_torchmfbd, psd_torchmfbd = power_spectrum(torch_mfbd[:, :, 0])
 
 
 def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
@@ -111,28 +157,30 @@ def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
     [axs.set_ylabel('Counts') for axs in ax]
     [axs.set_xlim(0, 1) for axs in ax]
     plt.tight_layout()
-    plt.savefig(plot_path+f'/hists_{name}.jpg') if name else plt.savefig(plot_path+'/hists.jpg')
+    plt.savefig(plot_path + f'/hists_{name}.jpg') if name else plt.savefig(plot_path + '/hists.jpg')
     plt.close()
+
 
 def _plot_hist(speckle, nbd, bins, name=None, set_xlim=True):
     fig, ax = plt.subplots(1, 1, figsize=(12, 5), dpi=300)
-    ax.hist(speckle.flatten(), bins=bins, histtype='step', color='blue', alpha=0.5, label='MuRAM')
-    ax.hist(nbd.flatten(), bins=bins, histtype='step', color='red', alpha=0.5, label='NBD')
+    ax.hist(speckle.flatten(), bins=bins, histtype='step', color='blue', alpha=0.5, label='MURaM')
+    ax.hist(nbd.flatten(), bins=bins, histtype='step', color='red', alpha=0.5, label='NeuralBD')
     ax.set_xlabel('normalized Intensity', fontsize=20)
     ax.set_ylabel('Counts', fontsize=20)
     if set_xlim:
-        ax.set_xlim(0, 0.7)
+        ax.set_xlim(0, 1)
     plt.tight_layout()
     ax.tick_params(axis='both', which='major', labelsize=20)
     plt.legend(fontsize=15, loc='upper right')
-    plt.savefig(plot_path+f'/hist_{name}.jpg') if name else plt.savefig(plot_path+'/hist.jpg')
+    plt.savefig(plot_path + f'/hist_{name}.jpg') if name else plt.savefig(plot_path + '/hist.jpg')
     plt.close()
+
 
 def _plot_hist_conv(speckle, nbd, conv, bins, name=None, set_xlim=True):
     fig, ax = plt.subplots(1, 1, figsize=(12, 5), dpi=300)
-    ax.hist(speckle.flatten(), bins=bins, histtype='step', color='blue', alpha=0.5, label='MuRAM')
-    ax.hist(nbd.flatten(), bins=bins, histtype='step', color='red', alpha=0.5, label='NBD')
-    ax.hist(conv.flatten(), bins=bins, histtype='step', color='green', alpha=0.5, label='Convolved')
+    ax.hist(speckle.flatten(), bins=bins, histtype='step', color='blue', label='MURaM')
+    ax.hist(nbd.flatten(), bins=bins, histtype='step', color='red', label='NeuralBD')
+    ax.hist(conv.flatten(), bins=bins, histtype='step', color='green', label='Convolved')
     ax.set_xlabel('normalized Intensity', fontsize=20)
     ax.set_ylabel('Counts', fontsize=20)
     if set_xlim:
@@ -142,6 +190,7 @@ def _plot_hist_conv(speckle, nbd, conv, bins, name=None, set_xlim=True):
     plt.legend(fontsize=15, loc='upper right')
     plt.savefig(plot_path + f'/hist+conv_{name}.jpg') if name else plt.savefig(plot_path + '/hist.jpg')
     plt.close()
+
 
 def _plot_image(x, y, name=None):
     fig, ax = plt.subplots(1, 2, figsize=(10, 5), dpi=300)
@@ -156,8 +205,8 @@ def _plot_image(x, y, name=None):
     [axs.set_xlabel('Distance [arcsec]', fontsize=20) for axs in ax]
     ax[0].set_ylabel('Distance [arcsec]', fontsize=20)
     ax[1].set_yticks([])
-    ax[0].set_title('MuRAM', fontsize=20, fontweight='bold')
-    ax[1].set_title('NBD', fontsize=20, fontweight='bold')
+    ax[0].set_title('MURaM', fontsize=20, fontweight='bold')
+    ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
 
     # Ticks
     for axs in ax:
@@ -183,6 +232,7 @@ def _plot_image(x, y, name=None):
     plt.savefig(plot_path + f'/reconstructed_image_{name}.jpg' if name else plot_path + '/reconstructed_image.jpg')
     plt.close()
 
+
 def _plot_images(x, y, z, name=None):
     fig, ax = plt.subplots(1, 3, figsize=(15, 5), dpi=300)  # removed constrained_layout=True
 
@@ -202,8 +252,8 @@ def _plot_images(x, y, z, name=None):
     ax[0].set_ylabel('Y [Mm]', fontsize=20)
     ax[1].set_yticks([])
     ax[2].set_yticks([])
-    ax[0].set_title('MuRAM', fontsize=20, fontweight='bold')
-    ax[1].set_title('NBD', fontsize=20, fontweight='bold')
+    ax[0].set_title('MURaM', fontsize=20, fontweight='bold')
+    ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
     ax[2].set_title('Richardson Lucy', fontsize=20, fontweight='bold')
 
     # Format ticks
@@ -248,8 +298,8 @@ def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     ax[1].set_yticks([])
     ax[2].set_yticks([])
     ax[0].set_title('Convolved', fontsize=20, fontweight='bold')
-    ax[1].set_title('NBD', fontsize=20, fontweight='bold')
-    ax[2].set_title('MuRAM', fontsize=20, fontweight='bold')
+    ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
+    ax[2].set_title('MURaM', fontsize=20, fontweight='bold')
 
     # Format ticks
     for axs in ax:
@@ -269,6 +319,7 @@ def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     plt.savefig(plot_path + f'/conv_reconstructed_{name}.jpg' if name else plot_path + '/conv_reconstructed.jpg')
     plt.close()
 
+
 def _plot_difference_map(x, y, name=None):
     diff = (x - y) * 100
     fig, ax = plt.subplots(1, 1, figsize=(5, 5), dpi=300)
@@ -282,8 +333,10 @@ def _plot_difference_map(x, y, name=None):
     ax.set_ylabel('Y [Mm]', fontsize=20)
     ax.tick_params(axis='both', which='major', labelsize=15)
     plt.tight_layout()
-    plt.savefig(plot_path + f'/reconstructed_difference_{name}.jpg') if name else plt.savefig(plot_path + '/reconstructed_difference.jpg')
+    plt.savefig(plot_path + f'/reconstructed_difference_{name}.jpg') if name else plt.savefig(
+        plot_path + '/reconstructed_difference.jpg')
     plt.close()
+
 
 def _plot_convolved(convolved_true, convolved_pred):
     n_channels = convolved_true.shape[-1]
@@ -293,23 +346,25 @@ def _plot_convolved(convolved_true, convolved_pred):
     for c in range(n_channels):
         for i in range(n_samples):
             ax = axs[0, i]
-            ax.imshow(convolved_true[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=0.7, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
+            ax.imshow(convolved_true[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=0.7,
+                      extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
             ax.tick_params(axis='both', which='major', labelsize=15)
-            [axis.set_yticks([]) for axis in axs[0, 1:i+1]]
+            [axis.set_yticks([]) for axis in axs[0, 1:i + 1]]
             ax = axs[1, i]
-            ax.imshow(convolved_pred[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=0.7, extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
+            ax.imshow(convolved_pred[:, :, i, c], cmap='gray', origin='lower', vmin=0, vmax=0.7,
+                      extent=[0, convolved_true.shape[1] * cdelt, 0, convolved_true.shape[0] * cdelt])
             ax.tick_params(axis='both', which='major', labelsize=15)
-            [axis.set_yticks([]) for axis in axs[1, 1:i+1]]
+            [axis.set_yticks([]) for axis in axs[1, 1:i + 1]]
             [axs[0, i].set_title(f'Frame {i:01d}') for i in range(n_samples)]
     fig.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.1, hspace=0.2)
     # Manually add centered labels
     fig.text(0.5, 0.04, 'X [Mm]', ha='center', va='center', fontsize=20)
     fig.text(0.04, 0.5, 'Y [Mm]', ha='center', va='center', rotation='vertical', fontsize=20)
-    plt.savefig(plot_path+'/convolved.jpg')
+    plt.savefig(plot_path + '/convolved.jpg')
     plt.close()
 
 
-def _plot_psfs(psfs):
+def _plot_psfs(psfs, name=None):
     n_images = psfs.shape[-1]
     n_samples = min(5, n_images)
     fig, axs = plt.subplots(1, n_samples, figsize=(2.2 * n_samples, 4), dpi=300,
@@ -329,7 +384,7 @@ def _plot_psfs(psfs):
     cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
     cbar.ax.tick_params(labelsize=12)
     plt.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.15, wspace=0.3)
-    plt.savefig(plot_path + '/psfs_pred.jpg', bbox_inches='tight')
+    plt.savefig(plot_path + f'/psfs_{name}.jpg' if name else plot_path + '/psfs.jpg', bbox_inches='tight')
     plt.close()
 
 
@@ -347,11 +402,11 @@ def _plot_kl_psfs(kl_psfs, psfs_pred):
     norm = LogNorm(vmin=all_data.min(), vmax=all_data.max())
     for i in range(n_samples):
         ax = axs[0, i]
-        im = ax.imshow(kl_psfs[:, :, i], origin='lower', norm=norm, cmap='viridis')
+        im = ax.imshow(np.sqrt(kl_psfs[:, :, i]), origin='lower', cmap='viridis')
         ax.set_title(f'PSF {i:02d}')
 
         ax = axs[1, i]
-        im = ax.imshow(psfs_pred[:, :, i], origin='lower', norm=norm, cmap='viridis')
+        im = ax.imshow(np.sqrt(psfs_pred[:, :, i]), origin='lower', cmap='viridis')
         ax.set_xlabel('Pixels', fontsize=10)
     # Add colorbar below all subplots
     cbar_ax = fig.add_axes([0.1, 0.1, 0.85, 0.07])
@@ -362,59 +417,156 @@ def _plot_kl_psfs(kl_psfs, psfs_pred):
     plt.savefig(plot_path + '/kl_psfs_pred.jpg', bbox_inches='tight')
     plt.close()
 
-def _plot_psd(k1, psd1, k2, psd2, k3, psd3, k4=None, psd4=None, name=None):
+
+def _plot_psd(k1, psd1, k2, psd2, k3, psd3, k4=None, psd4=None, k5=None, psd5=None, name=None):
     fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300)
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
-    axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='MuRAM', color='black')
-    axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
+    axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='MURaM', color='black')
+    axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NeuralBD', color='red')
     if k4 is not None and psd4 is not None:
         axs.semilogy(k4 / cdelt, psd4 / psd4[0], label='RL', color='blue')
+    if k5 is not None and psd5 is not None:
+        axs.semilogy(k5 / cdelt, psd5 / psd5[0], label='torchmfbd', color='saddlebrown')
     axs.set_xlabel('Spatial frequency [1/Mm]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
-    axs.legend(fontsize=15, loc='upper right')
-    axs.set_xlim(0, 5)
+    axs.legend(fontsize=12, loc='upper right')
+    #axs.set_xlim(0, 7.2)
     plt.tight_layout()
     plt.savefig(plot_path + f'/psd_{name}.jpg') if name else plt.savefig(plot_path + '/psd.jpg')
 
+
+def _plot_2d_hist(x, y, name=None):
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), dpi=300)
+    h = ax.hist2d(x.flatten(), y.flatten(), bins=100, cmap='plasma', norm=LogNorm())
+    ax.set_xlabel('MURaM', fontsize=25)
+    ax.set_ylabel('NeuralBD', fontsize=25)
+    ax.tick_params(axis='both', which='major', labelsize=22)
+    cbar = fig.colorbar(h[3], ax=ax)
+    cbar.set_label('Counts', fontsize=18)
+    cbar.ax.tick_params(labelsize=14)
+    plt.tight_layout()
+    plt.savefig(plot_path + f'/2d_hist_{name}.jpg') if name else plt.savefig(plot_path + '/2d_hist.jpg')
+    plt.close()
+
+
+
+def _plot_2d_hist_combined(x, y1, y2, name=None):
+    fig, axes = plt.subplots(
+        1, 2,
+        figsize=(12, 6),
+        dpi=300,
+        constrained_layout=True
+    )
+
+    bins = 100
+    x_flat = x.flatten()
+
+    # Compute histograms for shared normalization
+    H1, xedges, yedges1 = np.histogram2d(x_flat, y1.flatten(), bins=bins)
+    H2, _, yedges2 = np.histogram2d(x_flat, y2.flatten(), bins=bins)
+
+    # Plot 1:1 reference line
+    for ax in axes:
+        ax.plot([0, 1], [0, 1], color='green', linestyle='--', linewidth=3)
+
+    # Shared LogNorm (avoid zeros)
+    vmin = min(H1[H1 > 0].min(), H2[H2 > 0].min())
+    vmax = max(H1.max(), H2.max())
+    norm = LogNorm(vmin=vmin, vmax=vmax)
+
+    # Plot histograms
+    h1 = axes[0].hist2d(
+        x_flat, y1.flatten(),
+        bins=[xedges, yedges1],
+        cmap='plasma',
+        norm=norm
+    )
+
+    h2 = axes[1].hist2d(
+        x_flat, y2.flatten(),
+        bins=[xedges, yedges2],
+        cmap='plasma',
+        norm=norm
+    )
+
+    # Axis formatting
+    for ax in axes:
+        ax.set_xlabel('MURaM', fontsize=30)
+        ax.set_xlim(0.2, 0.7)
+        ax.set_ylim(0.2, 0.7)
+        ax.tick_params(axis='both', which='major', labelsize=22)
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_box_aspect(1)  # enforce square axes box
+
+    axes[0].set_ylabel('NeuralBD', fontsize=30)
+    axes[1].set_ylabel('Richardson-Lucy', fontsize=30)
+
+    # Shared colorbar (does not resize subplots)
+    cbar = fig.colorbar(
+        h1[3],
+        ax=axes,
+        location="right",
+        fraction=0.046,
+        pad=0.04
+    )
+    cbar.set_label('Counts', fontsize=28)
+    cbar.ax.tick_params(labelsize=22)
+
+    # Save figure
+    filename = f'/2d_hist_{name}.jpg' if name else '/2d_hist.jpg'
+    plt.savefig(plot_path + filename)
+    plt.close(fig)
 
 
 def mse(x, y):
     return np.mean((x - y) ** 2)
 
+
 def rmse(x, y):
     return np.sqrt(np.mean((x - y) ** 2))
-
 
 
 if __name__ == '__main__':
     # Plot
     bins = np.linspace(sim_array.min(), sim_array.max(), 100)
-    _plot_hists(sim_array[:, :, 0], reconstructed_pred[:, :, 0], bins=bins, title_x='MuRAM', title_y='NBD')
+    _plot_hists(sim_array[:, :, 0], reconstructed_pred[:, :, 0], bins=bins, title_x='MURaM', title_y='NeuralBD')
     _plot_hist(sim_array[:, :, 0], reconstructed_pred[:, :, 0], bins=bins)
-    _plot_hist_conv(sim_array[:, :, 0], reconstructed_pred[:, :, 0], convolved_true[:, :, 1, 0], bins=bins, name='convolved')
-    _plot_difference_map(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
+    _plot_hist_conv(sim_array[:, :, 0], reconstructed_pred[:, :, 0], convolved_true[:, :, 1, 0], bins=bins,
+                    name='convolved')
+    # _plot_difference_map(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     _plot_image(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     _plot_convolved(convolved_true, convolved_pred)
-    _plot_conv_reconstructed(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0], sim_array[:,:,0])
-    _plot_psfs(psfs_pred)
+    _plot_conv_reconstructed(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0], sim_array[:, :, 0])
+    _plot_psfs(psfs_pred, name='pred')
+    _plot_psfs(psfs_true, name='true')
     _plot_kl_psfs(psfs_true, psfs_pred)
 
     convolved_true_sum = np.sum(convolved_true, axis=-2)
     convolved_pred_sum = np.sum(convolved_pred, axis=-2)
     # normalize
-    convolved_true_sum = (convolved_true_sum - np.min(convolved_true_sum)) / (np.max(convolved_true_sum) - np.min(convolved_true_sum))
-    convolved_pred_sum = (convolved_pred_sum - np.min(convolved_pred_sum)) / (np.max(convolved_pred_sum) - np.min(convolved_pred_sum))
+    convolved_true_sum = (convolved_true_sum - np.min(convolved_true_sum)) / (
+                np.max(convolved_true_sum) - np.min(convolved_true_sum))
+    convolved_pred_sum = (convolved_pred_sum - np.min(convolved_pred_sum)) / (
+                np.max(convolved_pred_sum) - np.min(convolved_pred_sum))
     _plot_hist(convolved_true_sum[:, :, 0], convolved_pred_sum[:, :, 0], bins=100, name='convolved_sum', set_xlim=False)
 
     _plot_difference_map(convolved_true[:, :, 0, 0], convolved_pred[:, :, 0, 0], name='convolved_diff')
     _plot_difference_map(sim_array[:, :, 0], convolved_true[:, :, 1, 0], name='sim_convolved_diff')
     _plot_difference_map(sim_array[:, :, 0], rl_reconstruction, name='sim_rl_diff')
+    _plot_difference_map(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='sim_nbd_diff')
+    #_plot_difference_map(sim_array[:, :, 0], torch_mfbd[:, :, 0], name='sim_torchmfb')
 
     _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd)
     _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, name='psd_rl')
+    #_plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, k_torchmfbd, psd_torchmfbd, name='torchmfbd')
 
     _plot_images(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='sim_rl_reconstruction')
+
+    _plot_2d_hist(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='nbd')
+    _plot_2d_hist(sim_array[:, :, 0], rl_reconstruction, name='rl')
+    _plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='nbd_rl')
+    #_plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], torch_mfbd[:, :, 0], name='nbd_torchmfbd')
 
     mse_reconstructed = mse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     rmse_reconstructed = rmse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
@@ -422,19 +574,64 @@ if __name__ == '__main__':
     rmse_baseline = rmse(sim_array[:, :, 0], convolved_true[:, :, 1, 0])
     mse_rl = mse(sim_array[:, :, 0], rl_reconstruction)
     rmse_rl = rmse(sim_array[:, :, 0], rl_reconstruction)
+    #mse_torch = mse(sim_array[:, :, 0], torch_mfbd[:, :, 0])
+    #rmse_torch = rmse(sim_array[:, :, 0], torch_mfbd[:, :, 0])
 
-    reconstructed_pred_norm = (reconstructed_pred[:, :, 0] - np.min(reconstructed_pred[:, :, 0])) / (np.max(reconstructed_pred[:, :, 0]) - np.min(reconstructed_pred[:, :, 0]))
-    sim_array_norm = (sim_array[:, :, 0] - np.min(sim_array[:, :, 0])) / (np.max(sim_array[:, :, 0]) - np.min(sim_array[:, :, 0]))
-    rl_reconstruction = (rl_reconstruction - np.min(rl_reconstruction)) / (np.max(rl_reconstruction) - np.min(rl_reconstruction))
-    convolved_true_norm = (convolved_true[:, :, 1, 0] - np.min(convolved_true[:, :, 1, 0])) / (np.max(convolved_true[:, :, 1, 0]) - np.min(convolved_true[:, :, 1, 0]))
+    reconstructed_pred_norm = (reconstructed_pred[:, :, 0] - np.min(reconstructed_pred[:, :, 0])) / (
+                np.max(reconstructed_pred[:, :, 0]) - np.min(reconstructed_pred[:, :, 0]))
+    sim_array_norm = (sim_array[:, :, 0] - np.min(sim_array[:, :, 0])) / (
+                np.max(sim_array[:, :, 0]) - np.min(sim_array[:, :, 0]))
+    rl_reconstruction = (rl_reconstruction - np.min(rl_reconstruction)) / (
+                np.max(rl_reconstruction) - np.min(rl_reconstruction))
+    convolved_true_norm = (convolved_true[:, :, 1, 0] - np.min(convolved_true[:, :, 1, 0])) / (
+                np.max(convolved_true[:, :, 1, 0]) - np.min(convolved_true[:, :, 1, 0]))
+    #torch_mfbd_norm = (torch_mfbd[:, :, 0] - np.min(torch_mfbd[:, :, 0])) / (
+    #            np.max(torch_mfbd[:, :, 0]) - np.min(torch_mfbd[:, :, 0]))
     ssim_reconstructed = ssim(reconstructed_pred_norm, sim_array_norm, data_range=1.0)
     ssim_baseline = ssim(convolved_true_norm, sim_array_norm, data_range=1.0)
     ssim_rl = ssim(rl_reconstruction, sim_array_norm, data_range=1.0)
+    #ssim_torch = ssim(torch_mfbd_norm, sim_array_norm, data_range=1.0)
 
     print(f'MSE NBD: {mse_reconstructed:.4f}, RMSE NBD: {rmse_reconstructed:.4f}')
     print(f'MSE Baseline: {mse_baseline:.4f}, RMSE Baseline: {rmse_baseline:.4f}')
     print(f'MSE RL: {mse_rl:.4f}, RMSE RL: {rmse_rl:.4f}')
+    #print(f'MSE torchmfbd: {mse_torch:.4f}, RMSE torchmfbd: {rmse_torch:.4f}')
 
     print(f'SSIM NBD: {ssim_reconstructed:.4f}, SSIM Baseline: {ssim_baseline:.4f}, SSIM RL: {ssim_rl:.4f}')
     print(f'PSNR NBD: {20 * np.log10(1 / rmse_reconstructed):.4f}, PSNR Baseline: {20 * np.log10(1 / rmse_baseline):.4f}')
     print(f'PSNR RL: {20 * np.log10(1 / rmse_rl):.4f}')
+    #print(f'PSNR torchmfbd: {20 * np.log10(1 / rmse_torch):.4f}')
+    #print(f'SSIM torchmfbd: {ssim_torch:.4f}')
+
+
+
+
+fig, ax = plt.subplots(1, 2, figsize=(10, 5), dpi=300)
+im0 = ax[0].imshow(sim_array[:, :, 0], cmap='gray', origin='lower',
+                   extent=[0, sim_array.shape[0] * cdelt, 0, sim_array.shape[0] * cdelt], vmin=0, vmax=0.7)
+#im1 = ax[1].imshow(torch_mfbd[:, :, 0], cmap='gray', origin='lower',
+#                   extent=[0, reconstructed_pred.shape[0] * cdelt, 0, reconstructed_pred.shape[0] * cdelt], vmin=0, vmax=0.7)
+im1 = ax[1].imshow(sim_array[:, :, 0], cmap='gray', origin='lower',
+                   extent=[0, reconstructed_pred.shape[0] * cdelt, 0, reconstructed_pred.shape[0] * cdelt], vmin=0, vmax=0.7)
+[axs.set_xlabel('Distance [Mm]', fontsize=20) for axs in ax]
+ax[0].set_ylabel('Distance [Mm]', fontsize=20)
+ax[1].set_yticks([])
+ax[0].set_title('MURaM', fontsize=20, fontweight='bold')
+ax[1].set_title('torchmfbd', fontsize=20, fontweight='bold')
+for axs in ax:
+    axs.xaxis.set_major_locator(MaxNLocator(integer=True))
+    axs.yaxis.set_major_locator(MaxNLocator(integer=True))
+    axs.tick_params(axis='both', which='major', labelsize=20)
+divider0 = make_axes_locatable(ax[0])
+cax0 = divider0.append_axes("right", size="5%", pad=0.05)
+cbar0 = fig.colorbar(im0, cax=cax0)
+cbar0.set_label('normalized Intensity', fontsize=20)
+cbar0.ax.tick_params(labelsize=18)
+divider1 = make_axes_locatable(ax[1])
+cax1 = divider1.append_axes("right", size="5%", pad=0.05)
+cbar1 = fig.colorbar(im1, cax=cax1)
+cbar1.set_label('normalized Intensity', fontsize=20)
+cbar1.ax.tick_params(labelsize=18)
+plt.tight_layout()
+plt.savefig(plot_path + f'/reconstructed_image_torchmfbd.jpg')
+plt.close()

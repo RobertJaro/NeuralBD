@@ -52,7 +52,6 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'], weights=data_module.contrast_weights, speckle=data_module.speckle,
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
-            psf_size=data_module.psf_size,
             **config['model'])
 
     elif data_config['type'] == 'MURAM':
@@ -69,15 +68,31 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'],
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
-            psf_size=data_module.psf_size,
+            **config['model'])
+
+    elif data_config['type'] == 'KSO':
+        neuralbd = NEURALBDModule(
+            images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
+            pixel_per_ds=data_config['pixel_per_ds'],
+            sampling=data_config['psf_type'],
+            psf_type=data_config['psf_type'],
             **config['model'])
 
     else:
         raise ValueError('Unknown data type')
 
+    if config['meta_state'] == 'loadme':
+        meta_model_path = config['base_dir']+'/meta_model.pth'
+        meta_ckpt = torch.load(meta_model_path, map_location='cpu')
+        neuralbd.image_model.load_state_dict(meta_ckpt)
+        print(f"Loaded meta model from {meta_model_path}")
+    elif config['meta_state'] == 'none':
+        print("Continuing without loading meta model")
+    else:
+        raise ValueError('Unknown meta_state option')
+
     checkpoint_callback = ModelCheckpoint(dirpath=base_dir,
-                                          every_n_epochs=training_config[
-                                              'checkpoint_every_n_epochs'] if 'checkpoint_every_n_epochs' in training_config else 5,
+                                          every_n_epochs=training_config['checkpoint_every_n_epochs'] if 'checkpoint_every_n_epochs' in training_config else 5,
                                           save_last=True)
 
     # Callbacks
@@ -86,12 +101,18 @@ if __name__ == '__main__':
     # save callback
     save_path = os.path.join(base_dir, 'neuralbd.nbd')
 
-
     def save(*args, **kwargs):
-        torch.save({
-            'image_model': neuralbd.image_model,
-            'image_coords': data_module.img_coords,
-        }, save_path)
+        if data_config['psf_type'] == 'varying':
+            torch.save({
+                'image_model': neuralbd.image_model,
+                'psf_model': neuralbd.psf_model,
+                'image_coords': data_module.img_coords,
+            }, save_path)
+        else:
+            torch.save({
+                'image_model': neuralbd.image_model,
+                'image_coords': data_module.img_coords,
+            }, save_path)
 
 
     save_callback = LambdaCallback(on_validation_epoch_end=save)
@@ -106,6 +127,6 @@ if __name__ == '__main__':
                       strategy='dp' if N_GPUS > 1 else None,  # ddp breaks memory and wandb
                       num_sanity_val_steps=-1,
                       check_val_every_n_epoch=10,
-                      callbacks=[lr_monitor, checkpoint_callback, save_callback], )
+                      callbacks=[lr_monitor, checkpoint_callback, save_callback],)
     trainer.fit(neuralbd, data_module, ckpt_path=ckpt_path)
-    # trainer.save_checkpoint(os.path.join(base_dir, 'final.ckpt'))
+    #trainer.save_checkpoint(os.path.join(base_dir, 'final.ckpt'))

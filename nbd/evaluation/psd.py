@@ -1,4 +1,13 @@
+"""
+This code reuses and adapts functionality from:
+
+Author(s): Andres Asnesio Ramos
+Repository: https://github.com/aasensio/neural-MFBD/
+File: az_average.py
+"""
+
 import numpy as np
+from scipy.stats import binned_statistic
 
 
 def power_spectrum(*args, **kwargs):
@@ -757,3 +766,49 @@ def convolve(array, kernel, boundary='fill', fill_value=0,
         return result
     else:
         return rifft.real
+
+
+def azimuthal_power_spectrum(image, pixel_scale: float, nbins: int = 200,):
+    """
+    Compute azimuthal (radially averaged) power spectrum vs spatial frequency.
+
+    Parameters
+    ----------
+    image : 2D array
+        Input image (2D numpy array).
+    pixel_scale : float
+        Pixel scale in arcseconds/pixel.
+    nbins : int
+        Number of radial bins for averaging.
+    Returns
+    -------
+    freq_per_arcsec : 1D array
+        Spatial frequency in cycles per arcsecond.
+    power : 1D array
+        Azimuthally averaged power spectrum.
+    """
+    # --- 1. Load and preprocess image ---
+    im = image[:, :, 0]
+    data = np.array(im, dtype=float)
+    # --- 2. 2-D FFT and power spectrum ---
+    fdata = np.fft.fftshift(np.fft.fft2(data))
+    power2d = np.abs(fdata)**2
+    # --- 3. Radial coordinates in pixel units ---
+    ny, nx = data.shape
+    y, x = np.indices((ny, nx))
+    center = (nx // 2, ny // 2)
+    r = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+    # --- 4. Bin and azimuthally average ---
+    r_flat = r.ravel()
+    p_flat = power2d.ravel()
+    r_max = r_flat.max()
+    bins = np.linspace(0, r_max, nbins + 1)
+    power, _, _ = binned_statistic(r_flat, p_flat, statistic='mean', bins=bins)
+    r_bin = 0.5 * (bins[1:] + bins[:-1])  # bin centers
+    # --- 5. Convert pixel radius to spatial frequency [1/arcsec] ---
+    #   Spatial frequency (cycles per arcsecond) is
+    #   f = k / (N * pixel_scale_arcsec)
+    #   where k is the distance from center in pixels and N is image size (nx)
+    freq_per_arcsec = r_bin / (pixel_scale * nx)
+    #
+    return freq_per_arcsec, power

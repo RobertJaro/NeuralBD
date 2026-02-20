@@ -3,13 +3,15 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import torchmfbd
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator, FormatStrFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from nbd.data.editor import cutout
 from nbd.evaluation.loader import NBDOutput
-from nbd.evaluation.psd import power_spectrum
+from nbd.evaluation.psd import power_spectrum, azimuthal_power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and DKIST data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
@@ -17,7 +19,7 @@ parser.add_argument('--base_path', type=str, help='the path to the base director
 args = parser.parse_args()
 
 base_path = args.base_path
-plot_path = base_path + '/plots'
+plot_path = base_path + '/plots/torchmfbd/crop1'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 0.011 # arcsec/pixel
@@ -27,35 +29,89 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-nbd_mean = reconstructed_pred.mean()
+# reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 
 dkist_rec = np.load('/gpfs/data/fs71254/schirni/DKIST/recon.1370.npz')
 dkist_rec = dkist_rec['rec']
 dkist_rec = cutout(dkist_rec[:, :, None, None], 1500, 2500, 512) # ss: 3000, 3000; penumbra: 1500, 2500
 vmin, vmax = dkist_rec.min(), dkist_rec.max()
 dkist_rec = (dkist_rec - vmin) / (vmax - vmin)  # normalize to [0, 1]
-dkist_mean = dkist_rec.mean()
+# dkist_rec = dkist_rec / dkist_rec.mean()
 
 # shift mean
-reconstructed_pred = reconstructed_pred - nbd_mean + dkist_mean
+reconstructed_pred = reconstructed_pred - reconstructed_pred.mean() + dkist_rec.mean()
 
 # load convolved images
 convolved_pred = np.load(base_path+'/conv_pred.npy')
 convolved_true = np.load(base_path+'/conv_true.npy')
 
+# convolved_true = convolved_true / convolved_true.mean()
+
 # load psfs
 psfs_pred = np.load(base_path+'/psfs_pred.npy')
 
-# crop
-#reconstructed_pred = reconstructed_pred[230:290, 230:290, :] # 50:-50, 50:-50
-#dkist_rec = dkist_rec[225:285, 215:275, :]
-#convolved_true = convolved_true[230:290, 230:290, :, :]
-#convolved_pred = convolved_pred[100:420, 100:420, :, :]
+# deconvolve with torchmfbd for comparison
+frames = convolved_true[..., 0]
+frames = frames.transpose(2, 0, 1)  # (n_frames, height, width)
+frames = frames[None, :, :, :]  # (1, n_frames, height, width)
+frames_torchmfbd = torch.tensor(frames.astype('float32'))
+
+# Patchify and add the frames
+decSI = torchmfbd.Deconvolution('/home/fs71254/schirni/configs/torchmfbd_dkist.yaml')
+patchify = torchmfbd.Patchify4D()
+frames_patches = patchify.patchify(frames_torchmfbd, patch_size=64, stride_size=10, flatten_sequences=True)
+noise = torchmfbd.compute_noise(frames_patches[0:1, 0:1, ...])
+decSI.add_frames(frames_patches, id_object=0, id_diversity=0, diversity=0.0, sigma=noise)
+
+# Deconvolve
+decSI.deconvolve(infer_object=False, optimizer='adam', simultaneous_sequences=1000, n_iterations=100)
+
+# Unpatchify
+obj = patchify.unpatchify(decSI.obj[0], apodization=6, weight_type='cosine', weight_params=30).cpu().numpy()
+torch_mfbd = obj.transpose(1, 2, 0)
+torch_mfbd = (torch_mfbd - torch_mfbd.min()) / (torch_mfbd.max() - torch_mfbd.min())
+# torch_mfbd = torch_mfbd / torch_mfbd.mean()
+
+# crop 1
+reconstructed_pred = reconstructed_pred[100:400, 100:400, :]
+dkist_rec = dkist_rec[100:400, 100:400, :]
+convolved_true = convolved_true[100:400, 100:400, :, :]
+convolved_pred = convolved_pred[100:400, 100:400, :, :]
+torch_mfbd = torch_mfbd[100:400, 100:400, :]
+
+# crop 1
+#reconstructed_pred = reconstructed_pred[220:290, 220:290, :]
+#dkist_rec = dkist_rec[220:290, 205:275, :]
+#convolved_true = convolved_true[220:290, 220:290, :, :]
+#convolved_pred = convolved_pred[220:290, 220:290, :, :]
+#torch_mfbd = torch_mfbd[220:290, 215:285, :]
+
+# Crops for spatially varying
+
+# crop2
+#reconstructed_pred = reconstructed_pred[900:1100, 900:1100, :]
+#dkist_rec = dkist_rec[900:1100, 895:1095, :]
+#convolved_true = convolved_true[900:1100, 900:1100, :, :]
+#convolved_pred = convolved_pred[900:1100, 900:1100, :, :]
+
+# crop3
+#reconstructed_pred = reconstructed_pred[1600:1900, 1600:1900, :]
+#dkist_rec = dkist_rec[1600:1900, 1595:1895, :]
+#convolved_true = convolved_true[1600:1900, 1600:1900, :, :]
+#convolved_pred = convolved_pred[1600:1900, 1600:1900, :, :]
+#torch_mfbd = torch_mfbd[1600:1900, 1600:1900, :]
+
+# crop4
+#reconstructed_pred = reconstructed_pred[300:1000, 300:1000, :]
+#dkist_rec = dkist_rec[300:1000, 295:995, :]
+#convolved_true = convolved_true[300:1000, 300:1000, :, :]
+#convolved_pred = convolved_pred[300:1000, 300:1000, :, :]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
 k_speckle, psd_speckle = power_spectrum(dkist_rec[:, :, 0] + 1e-10)
+k_torchmfbd, psd_torchmfbd = power_spectrum(torch_mfbd[:, :, 0])
 
 
 def _plot_image(x, y, name=None, title1=None):
@@ -74,7 +130,7 @@ def _plot_image(x, y, name=None, title1=None):
     ax[0].set_ylabel('Distance [arcsec]', fontsize=20)
     ax[1].set_yticks([])
     ax[0].set_title(title1, fontsize=20, fontweight='bold')
-    ax[1].set_title('NBD', fontsize=20, fontweight='bold')
+    ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
 
     # Ticks formatting
     for axs in ax:
@@ -100,7 +156,7 @@ def _plot_image(x, y, name=None, title1=None):
     plt.savefig(plot_path + f'/reconstructed_image_{name}.jpg' if name else plot_path + '/reconstructed_image.jpg')
     plt.close()
 
-def _plot_frame_nbd_speckle(x, y, z, name=None, title1="Frame", title2="NBD", title3="Reconstruction"):
+def _plot_frame_nbd_speckle(x, y, z, name=None, title1="Frame", title2="NeuralBD", title3="Reconstruction"):
     fig, ax = plt.subplots(1, 3, figsize=(15, 5), dpi=300)
 
     # Display images
@@ -191,18 +247,20 @@ def _plot_psfs(psfs):
     plt.savefig(plot_path + '/psfs_pred.jpg', bbox_inches='tight')
     plt.close()
 
-def _plot_psd(k1, psd1, k2, psd2, k3, psd3):
+def _plot_psd(k1, psd1, k2, psd2, k3, psd3, k4=None, psd4=None):
     fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300)
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
     axs.semilogy(k2 / cdelt, psd2 / psd2[0], label='Speckle', color='black')
-    axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NBD', color='red')
-    axs.set_xlabel('Spatial frequency [1/Mm]', fontsize=17)
+    axs.semilogy(k3 / cdelt, psd3 / psd3[0], label='NeuralBD', color='red')
+    if k4 is not None and psd4 is not None:
+        axs.semilogy(k4 / cdelt, psd4 / psd4[0], label='torchmfbd', color='saddlebrown')
+    axs.set_xlabel('Spatial frequency [1/arcsec]', fontsize=17)
     axs.set_ylabel('Azimuthal PSD', fontsize=17)
     axs.tick_params(axis='both', which='major', labelsize=15)
     axs.legend(fontsize=15, loc='upper right')
-    axs.set_xlim(0, 63)
+    axs.set_xlim(0, 70)
     plt.tight_layout()
-    plt.savefig(plot_path + '/psd.jpg')
+    plt.savefig(plot_path + '/psd_azmth.jpg')
 
 def _plot_hist(speckle, nbd, bins, name=None):
     fig, ax = plt.subplots(1, 1, figsize=(10, 5), dpi=300)
@@ -217,14 +275,33 @@ def _plot_hist(speckle, nbd, bins, name=None):
     plt.savefig(plot_path+f'/hist_{name}.jpg') if name else plt.savefig(plot_path+'/hist.jpg')
     plt.close()
 
+def _plot_single_psf(psf, plot_path, name=None):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8), dpi=300)
+    norm = LogNorm(vmin=psf[psf > 0].min(), vmax=psf.max())
+    im = ax.imshow(psf, origin='lower', norm=norm, cmap='viridis')
+    ax.set_xlabel('X [pix]', fontsize=20)
+    ax.set_ylabel('Y [pix]', fontsize=20)
+    ax.tick_params(axis='both', which='major', labelsize=15)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label('Intensity', fontsize=40)
+    cbar.ax.tick_params(labelsize=40)
+    plt.tight_layout()
+    plt.savefig(plot_path + f'/single_psf_{name}.jpg') if name else plt.savefig(plot_path + '/single_psf.jpg')
+    plt.close()
+
 if __name__ == '__main__':
 
     _plot_image(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0])
     _plot_image(dkist_rec[:, :, 0], reconstructed_pred[:, :, 0], name='dkist_vs_nbd', title1='SPECKLE')
-    _plot_frame_nbd_speckle(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0], dkist_rec[:, :, 0],)
+    _plot_image(dkist_rec[:, :, 0], torch_mfbd[:, :, 0], name='dkist_vs_torchmfbd', title1='SPECKLE')
+    _plot_frame_nbd_speckle(convolved_true[:, :, 0, 0], reconstructed_pred[:, :, 0], dkist_rec[:, :, 0], name='frame_nbd_speckle', title1='Frame', title2='NeuralBD', title3='Speckle')
+    _plot_frame_nbd_speckle(reconstructed_pred[:, :, 0], dkist_rec[:, :, 0], torch_mfbd[:, :, 0], name='nbd_speckle_torchmfbd', title1='NeuralBD', title2='Speckle', title3='torchmfbd')
     _plot_convolved(convolved_true, convolved_pred)
     _plot_psfs(psfs_pred)
     _plot_hist(dkist_rec[:, :, 0], reconstructed_pred[:, :, 0], bins=50)
 
     # plot psd
-    _plot_psd(k_frame, psd_frame, k_speckle, psd_speckle, k_nbd, psd_nbd)
+    _plot_psd(k_frame, psd_frame, k_speckle, psd_speckle, k_nbd, psd_nbd, k_torchmfbd, psd_torchmfbd)
+    _plot_single_psf(psfs_pred[:, :, 0], plot_path='/gpfs/data/fs71254/schirni/nstack', name='example_psf')
