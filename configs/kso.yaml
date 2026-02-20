@@ -1,0 +1,24 @@
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/KSO_2023_freq
+meta_state: 'loadme'
+data:
+  type: 'KSO'
+  data_path: '/gpfs/data/fs71254/schirni/nstack/data/kso_2023_25s.npy'
+  n_images: 100
+  pixel_per_ds: 511.5
+  x_crop: 964
+  y_crop: 964
+  crop_size: 2048
+  psf_type: 'varying'
+
+logging:
+  project: NeuralBD
+  name: KSO
+
+training:
+  epochs: 6000
+  log_every_n_steps: 100
+  name: KSO_varying
+  check_val_every_n_epoch: 10
+model:
+  dim: 512
+  posencoding: True

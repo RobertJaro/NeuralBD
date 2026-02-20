@@ -1,0 +1,22 @@
+base_dir: /cl_tmp/schirnin/Training/NeuralBD_GREGOR_Siren
+data:
+  type: 'GREGOR'
+  data_path: '/cl_tmp/schirnin/data/hifi_20220602_095015_sd.fts'
+  n_images: 50
+  pixel_per_ds: 511.5
+  x_crop: 964
+  y_crop: 964
+  crop_size: 128
+  psf_type: 'default'
+
+logging:
+  project: NeuralBD
+  name: GREGOR
+
+training:
+  epochs: 8050
+  log_every_n_steps: 100
+  name: GREGOR
+  meta_path: '/cl_tmp/schirnin/Training/NeuralBD_GREGOR_Siren/final.ckpt'
+model:
+  dim: 512
