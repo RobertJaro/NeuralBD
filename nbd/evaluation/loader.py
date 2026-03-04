@@ -70,8 +70,8 @@ class NBDSVOutput:
 
         return output_image
 
-    def load_psfs(self, coords):
-        log_psfs = self.psf_model(coords)  # --> batch, x, y, n_images
+    def load_psfs(self, coords, psf_coords):
+        log_psfs = self.psf_model(coords, psf_coords)  # --> batch, x, y, n_images
         psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
         psfs = psfs[0, ...]
 

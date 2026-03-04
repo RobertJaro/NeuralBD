@@ -102,7 +102,7 @@ class NEURALBDModule(LightningModule):
         if self.psf_type == 'default':
             psf = self.get_psf(area_elements)
         elif self.psf_type == 'varying':
-            psf = self.get_varying_psf(coords, area_elements)
+            psf = self.get_varying_psf(coords, psf_coords, area_elements)
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
@@ -135,10 +135,10 @@ class NEURALBDModule(LightningModule):
         return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
         # return kl_psfs
 
-    def get_varying_psf(self, coords, area_elements):
+    def get_varying_psf(self, coords, psf_coords, area_elements):
         # area_elements: batch, x, y
         # self.log_psfs: batch, x, y, n_images
-        log_psfs = self.psf_model(coords)  # --> batch, x, y, n_images
+        log_psfs = self.psf_model(coords, psf_coords)  # --> batch, x, y, n_images
         psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
 
         # Normalize PSFs
@@ -206,8 +206,9 @@ class NEURALBDModule(LightningModule):
         elif self.psf_type == 'varying':
             # Dummy coordinates and area elements for PSF prediction
             dummy_coords = torch.ones(1, 2, dtype=torch.float32, device=convolved_pred.device) * 0.5
+            dummy_psf_coords = self.psf_coords[None, :, :, :]
             dummy_area_elements = torch.ones(1, *self.psf_size, dtype=torch.float32, device=convolved_pred.device) * 0.5
-            psfs_pred = self.get_varying_psf(dummy_coords, dummy_area_elements)[0]
+            psfs_pred = self.get_varying_psf(dummy_coords, dummy_psf_coords, dummy_area_elements)[0]
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
@@ -232,8 +233,8 @@ class NEURALBDModule(LightningModule):
             np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
 
         elif self.muram is not None:
-            self._plot_deconvolution_muram(image_pred, self.muram)
-            save_path = '/gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_spatially_varying_interp256_noise_freq256_crop'
+            self._plot_deconvolution_muram(image_pred, self.muram[256:-256, 256:-256, :])
+            save_path = '/glade/work/cschirninger/training/Muram_spatially_varying_r0_020_smooth'
             np.save(save_path + '/psfs_pred.npy', psfs_pred)
             np.save(save_path + '/psfs_true.npy', self.kl_psfs)
             np.save(save_path + '/conv_true.npy', convolved_true)
@@ -338,7 +339,7 @@ class NEURALBDModule(LightningModule):
         fig, axs = plt.subplots(1, n_samples, figsize=(2 * n_samples, 4), dpi=300)
         for i in range(n_samples):
             ax = axs[i]
-            im = ax.imshow(np.sqrt(psfs[:, :, i]), origin='lower', vmin=0, vmax=1)
+            im = ax.imshow(np.sqrt(psfs[:, :, i]), origin='lower', vmax=1, norm='log')
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)
@@ -354,14 +355,14 @@ class NEURALBDModule(LightningModule):
         fig, axs = plt.subplots(2, n_samples, figsize=(2 * n_samples, 4), dpi=300)
         for i in range(n_samples):
             ax = axs[0, i]
-            im = ax.imshow(np.sqrt(kl_psfs[:, :, i]), origin='lower', vmin=0, vmax=1)
+            im = ax.imshow(np.sqrt(kl_psfs[:, :, i]), origin='lower', vmax=1, norm='log')
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)
             ax.set_title(f'PSF {i:02d}')
 
             ax = axs[1, i]
-            im = ax.imshow(np.sqrt(psfs_pred[:, :, i]), origin='lower', vmin=0, vmax=1)
+            im = ax.imshow(np.sqrt(psfs_pred[:, :, i]), origin='lower', vmax=1, norm='log')
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)

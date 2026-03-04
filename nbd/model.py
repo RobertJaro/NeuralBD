@@ -61,7 +61,7 @@ class Sine(nn.Module):
 
 class ImageModel(nn.Module):
 
-    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 2):
+    def __init__(self, dim=512, n_channels=2, posencoding=True, posenc_scale=2.0 ** 8):
         super().__init__()
         self.symm_encoding = SymmetricBoundaryEncoding()
 
@@ -89,25 +89,39 @@ class ImageModel(nn.Module):
 
 class PSFModel(nn.Module):
 
-    def __init__(self, psf_shape, dim=64, n_layers=4, posenc_scale=2.0 ** 2):
+    def __init__(self, psf_shape, dim=128, n_layers=4, posenc_scale=2.0 ** 2):
         super().__init__()
         self.psf_shape = psf_shape
         self.dim = dim
 
-        self.posenc = GaussianPositionalEncoding(2, scale=posenc_scale)
+        self.posenc = GaussianPositionalEncoding(4, scale=posenc_scale)
         self.d_in = nn.Linear(self.posenc.d_output, dim)
         # self.d_in = nn.Linear(2, dim)
+        # self.d_in = nn.Linear(4, dim)
         lin = [nn.Linear(dim, dim) for _ in range(n_layers)]
         self.layers = nn.ModuleList(lin)
-        self.d_out = nn.Linear(dim, np.prod(psf_shape))
+        # self.d_out = nn.Linear(dim, np.prod(psf_shape))
+        self.d_out = nn.Linear(dim, psf_shape[-1])
         self.activation = Sine()
 
-    def forward(self, coords):
-        enc = self.posenc(coords)
+    def forward(self, coords, psf_coords):
+        # coords --> (batch, 2)
+        # psf_coords --> (batch, px, py, 2)
+        # input --> (batch, px, py, 4)
+        psf_coords = psf_coords * 512
+        px = psf_coords.shape[1]
+        py = psf_coords.shape[2]
+        coords = coords[:, None, None, :].expand(-1, px, py, -1)
+        input = torch.cat([coords, psf_coords], dim=-1)
+        enc = self.posenc(input)
         x = self.activation(self.d_in(enc))
 
         for l in self.layers:
             x = self.activation(l(x))
-        x = self.d_out(x)
-        x = x.reshape(-1, *self.psf_shape)
+        x = self.d_out(x) # (batch, px, py, n_images)
+        # x = x.reshape(-1, *self.psf_shape)
+        #sigma = 5
+        #log_normal_norm = - np.log(sigma * np.sqrt(2 * np.pi))
+        #log_normal = -0.5 * (psf_coords[..., 0:1]**2 + psf_coords[..., 1:2]**2) / (sigma) ** 2 + log_normal_norm
+        #log_psf = log_normal + x
         return x
