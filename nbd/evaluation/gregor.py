@@ -32,7 +32,7 @@ neuralbd = NBDOutput(model_path)
 
 # load reconstructed images
 reconstructed_pred = neuralbd.load_reconstructed_img()
-#reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
+# reconstructed_pred = reconstructed_pred / reconstructed_pred.mean()
 # speckle = neuralbd.speckle
 fits_array_speckle = []
 for i in range(2):
@@ -95,7 +95,7 @@ torch_mfbd = torch_mfbd[113:213, 22:122, :]
 #convolved_pred = convolved_pred[150:190, 65:105, :, :]
 #torch_mfbd = torch_mfbd[155:195, 65:105, :]
 
-# reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
+reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + speckle.mean()
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero

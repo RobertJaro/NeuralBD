@@ -5,12 +5,12 @@ telescope:
 images:
     n_pixel : 32
     pix_size : 0.01
-    apodization_border : 8
+    apodization_border : 6
 
 object1:
     wavelength : 4500.0
     image_filter: scharmer
-    cutoff : [0.90, 0.95]
+    cutoff : [0.75, 0.80]
 
 optimization:
     gpu : 1

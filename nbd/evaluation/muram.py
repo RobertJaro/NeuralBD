@@ -4,8 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torchmfbd
-import patchify
+# import torchmfbd
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -13,7 +12,7 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.restoration import richardson_lucy
 
 from nbd.data.editor import ReadSimulationEditor, cutout
-from nbd.evaluation.loader import NBDOutput
+from nbd.evaluation.loader import NBDOutput, NBDSVOutput
 from nbd.evaluation.psd import power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and Muram data')
@@ -25,7 +24,7 @@ args = parser.parse_args()
 base_path = args.base_path
 data_path = args.muram
 
-plot_path = base_path + '/plots'
+plot_path = base_path + '/plots/crop1'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 96 # km/pixel
@@ -44,7 +43,8 @@ vmin, vmax = np.min(sim_array), np.max(sim_array)
 sim_array = (sim_array - vmin) / (vmax - vmin)
 
 sim_array = np.stack([sim_array, sim_array], -1)
-sim_array = cutout(sim_array[..., None], 400, 400, reconstructed_pred.shape[0]) # 478, 349, 256 # old: 332, 332, 256
+# sim_array = cutout(sim_array[..., None], 400, 400, reconstructed_pred.shape[0]) # 478, 349, 256 # old: 332, 332, 256
+sim_array = sim_array[256:-256, 256:-256, ...]
 
 # load convolved images
 convolved_pred = np.load(base_path + '/conv_pred.npy')
@@ -52,11 +52,15 @@ convolved_true = np.load(base_path + '/conv_true.npy')
 
 frames = convolved_true[..., 0]
 frames = frames.transpose(2, 0, 1)  # (n_frames, height, width)
-frames = frames[None, :, :, :]  # (1, n_frames, height, width)
-frames_torchmfbd = torch.tensor(frames.astype('float32'))
+#frames = frames[None, :, :, :]  # (1, n_frames, height, width)
+#frames_torchmfbd = torch.tensor(frames.astype('float32'))
+frames_sv = np.stack([frames, frames], axis=-1)  # (n_frames, height, width, 2)
+frames_sv = frames_sv.transpose(3, 0, 1, 2) # (2, n_frames, height, width)
+frames_sv = frames_sv[None, ...]  # (1, 2, n_frames, height, width)
+frames_sv_torchmfbd = torch.tensor(frames_sv.astype('float32'))
 
 # remove 10% of the intensity from sim_array from recontructed_pred
-reconstructed_pred = reconstructed_pred * 0.9
+# reconstructed_pred = reconstructed_pred * 0.9
 # reconstructed_pred = (reconstructed_pred - reconstructed_pred.mean()) + sim_array.mean()
 
 # load psfs
@@ -64,21 +68,38 @@ psfs_pred = np.load(base_path + '/psfs_pred.npy')
 psfs_true = np.load(base_path + '/psfs_true.npy')
 
 # perform richardson lucy deconvolution on convolved images
-rl_reconstruction = richardson_lucy(convolved_true[:, :, 0, 0], psfs_true[:, :, 0], num_iter=1000)
+# rl_reconstruction = richardson_lucy(convolved_true[:, :, 0, 0], psfs_true[:, :, 0], num_iter=1000)
 
 # perform torchmfbd deconvolution
-decSI = torchmfbd.Deconvolution('/home/fs71254/schirni/configs/torchmfbd_muram.yaml')
-patchify = torchmfbd.Patchify4D()
-frames_patches = patchify.patchify(frames_torchmfbd, patch_size=32, stride_size=10, flatten_sequences=True)
-noise = torchmfbd.compute_noise(frames_patches[0:1, 0:1, ...])
-decSI.add_frames(frames_patches, id_object=0, id_diversity=0, diversity=0.0, sigma=noise)
+#decSI = torchmfbd.Deconvolution('/home/fs71254/schirni/configs/torchmfbd_muram.yaml')
+#patchify = torchmfbd.Patchify4D()
+#frames_patches = patchify.patchify(frames_torchmfbd, patch_size=32, stride_size=10, flatten_sequences=True)
+#noise = torchmfbd.compute_noise(frames_patches[0:1, 0:1, ...])
+#decSI.add_frames(frames_patches, id_object=0, id_diversity=0, diversity=0.0, sigma=noise)
 
 # Deconvolve
-decSI.deconvolve(infer_object=False, optimizer='adam', simultaneous_sequences=1000, n_iterations=50)
+#decSI.deconvolve(infer_object=False, optimizer='adam', simultaneous_sequences=1000, n_iterations=50)
 
-true_object = patchify.unpatchify(decSI.obj[0], apodization=6, weight_type='cosine', weight_params=30).cpu().numpy()
-torch_mfbd = true_object.transpose(1, 2, 0)
+#true_object = patchify.unpatchify(decSI.obj[0], apodization=6, weight_type='cosine', weight_params=30).cpu().numpy()
+# torch_mfbd = true_object.transpose(1, 2, 0)
 # torch_mfbd = torch_mfbd / torch_mfbd.mean()
+
+# torchmfbd spatially varying deconvolution
+# patchify = torchmfbd.Patchify4D()
+#decSI = torchmfbd.DeconvolutionSV('/glade/u/home/cschirninger/projects/NeuralBD/configs/torchmfbdsv_muram.yaml')
+# frames_patches = [None] * 2
+# Patchify and add the frames
+#for i in range(2):
+#    frames_patches[i] = patchify.patchify(frames_sv_torchmfbd[:, i, :, :, :], patch_size=64, stride_size=40, flatten_sequences=True)
+#    decSI.add_frames(frames_patches[:, i, :, :, :], id_object=i, id_diversity=0, diversity=0.0)
+
+#decSI.deconvolve(simultaneous_sequences=1,
+#                 n_iterations=10,
+#                 batch_size=12)
+
+#obj = [None] * 2
+#for i in range(2):
+#    obj[i] = decSI.obj[i].cpu().numpy()
 
 # crop sim array and reconstructed and convolved images
 crop_param = 120
@@ -116,35 +137,28 @@ crop_param = 120
 # convolved_true = convolved_true[160:230, 160:230, :, :]
 # rl_reconstruction = rl_reconstruction[160:230, 160:230]
 
+# crop spatially varying penumbra
+#sim_array = sim_array[300:556, 300:556, :]
+#reconstructed_pred = reconstructed_pred[300:556, 300:556, :]
+#convolved_pred = convolved_pred[300:556, 300:556, :, :]
+#convolved_true = convolved_true[300:556, 300:556, :, :]
+#rl_reconstruction = rl_reconstruction[300:556, 300:556]
+# torch_mfbd = torch_mfbd[370:470, 370:470]
+
 # crop spatially varying umbra
-#sim_array = sim_array[450:550, 450:550, :]
-#reconstructed_pred = reconstructed_pred[450:550, 450:550, :]
-#convolved_pred = convolved_pred[450:550, 450:550, :, :]
-#convolved_true = convolved_true[450:550, 450:550, :, :]
-#rl_reconstruction = rl_reconstruction[450:550, 450:550]
-
-# crop spatially varying penumbra
-sim_array = sim_array[300:556, 300:556, :]
-reconstructed_pred = reconstructed_pred[300:556, 300:556, :]
-convolved_pred = convolved_pred[300:556, 300:556, :, :]
-convolved_true = convolved_true[300:556, 300:556, :, :]
-rl_reconstruction = rl_reconstruction[300:556, 300:556]
-torch_mfbd = torch_mfbd[370:470, 370:470]
-
-# crop spatially varying penumbra
-#sim_array = sim_array[200:712, 200:712, :]
-#reconstructed_pred = reconstructed_pred[200:712, 200:712, :]
-#convolved_pred = convolved_pred[200:712, 200:712, :, :]
-#convolved_true = convolved_true[200:712, 200:712, :, :]
-#rl_reconstruction = rl_reconstruction[200:712, 200:712]
+sim_array = sim_array[220:284, 220:284, :]
+reconstructed_pred = reconstructed_pred[220:284, 220:284, :]
+convolved_pred = convolved_pred[220:284, 220:284, :, :]
+convolved_true = convolved_true[220:284, 220:284, :, :]
+# rl_reconstruction = rl_reconstruction[200:712, 200:712]
 #torch_mfbd = torch_mfbd[200:712, 200:712]
 
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)
 k_muram, psd_muram = power_spectrum(sim_array[:, :, 0])
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
-k_rl, psd_rl = power_spectrum(rl_reconstruction)
-k_torchmfbd, psd_torchmfbd = power_spectrum(torch_mfbd[:, :, 0])
+# k_rl, psd_rl = power_spectrum(rl_reconstruction)
+# k_torchmfbd, psd_torchmfbd = power_spectrum(torch_mfbd[:, :, 0])
 
 
 def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
@@ -280,7 +294,6 @@ def _plot_images(x, y, z, name=None):
 
 def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     fig, ax = plt.subplots(1, 3, figsize=(15.5, 5), dpi=300)
-
     # Show images
     im0 = ax[0].imshow(conv, cmap='gray', origin='lower',
                        extent=[0, conv.shape[0] * cdelt, 0, conv.shape[0] * cdelt],
@@ -291,7 +304,6 @@ def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     im2 = ax[2].imshow(speckle, cmap='gray', origin='lower',
                        extent=[0, speckle.shape[0] * cdelt, 0, speckle.shape[0] * cdelt],
                        vmin=0, vmax=0.7)
-
     # Axis labels and titles
     [axs.set_xlabel('X [Mm]', fontsize=20) for axs in ax]
     ax[0].set_ylabel('Y [Mm]', fontsize=20)
@@ -300,13 +312,11 @@ def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
     ax[0].set_title('Convolved', fontsize=20, fontweight='bold')
     ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
     ax[2].set_title('MURaM', fontsize=20, fontweight='bold')
-
     # Format ticks
     for axs in ax:
-        axs.xaxis.set_major_locator(MaxNLocator(integer=True))
-        axs.yaxis.set_major_locator(MaxNLocator(integer=True))
+        axs.xaxis.set_major_locator(MaxNLocator(nbins=6))
+        axs.yaxis.set_major_locator(MaxNLocator(nbins=6))
         axs.tick_params(axis='both', which='major', labelsize=20)
-
     # Add individual colorbars
     for image, axis in zip([im0, im1, im2], ax):
         divider = make_axes_locatable(axis)
@@ -314,7 +324,6 @@ def _plot_conv_reconstructed(conv, nbd, speckle, name=None):
         cbar = fig.colorbar(image, cax=cax)
         cbar.set_label('normalized Intensity', fontsize=20)
         cbar.ax.tick_params(labelsize=18)
-
     plt.tight_layout()
     plt.savefig(plot_path + f'/conv_reconstructed_{name}.jpg' if name else plot_path + '/conv_reconstructed.jpg')
     plt.close()
@@ -418,6 +427,37 @@ def _plot_kl_psfs(kl_psfs, psfs_pred):
     plt.close()
 
 
+def _plot_true_vs_pred_psf(psf_true, psf_pred, idx=0):
+    fig, axs = plt.subplots(1, 2, figsize=(5, 10), dpi=300,
+                            sharex=True, sharey=True)
+    # Extract single PSFs
+    true_psf = psf_true
+    pred_psf = psf_pred[:, :, idx].detach().cpu().numpy()
+    # Determine global normalization (positive values only)
+    all_data = np.concatenate([true_psf.flatten(), pred_psf.flatten()])
+    all_data = all_data[all_data > 0]
+    norm = LogNorm(vmin=all_data.min(), vmax=all_data.max())
+    im0 = axs[0].imshow(true_psf, origin='lower',
+                        cmap='viridis', norm=norm)
+    axs[0].set_title('True PSF')
+    axs[0].set_xlabel('Pixels', fontsize=12)
+    axs[0].set_ylabel('Pixels', fontsize=12)
+    im1 = axs[1].imshow(pred_psf, origin='lower',
+                        cmap='viridis', norm=norm)
+    axs[1].set_title('Predicted PSF')
+    axs[1].set_xlabel('Pixels', fontsize=12)
+    # Shared colorbar
+    for image, axis in zip([im0, im1], axs):
+        divider = make_axes_locatable(axis)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cbar = fig.colorbar(image, cax=cax)
+        cbar.ax.tick_params(labelsize=12)
+    plt.tight_layout()
+    plt.savefig(plot_path + '/psf_comparison.jpg',
+                bbox_inches='tight') if idx == 0 else plt.savefig(plot_path + f'/psf_comparison_{idx:02d}.jpg', bbox_inches='tight')
+    plt.close()
+
+
 def _plot_psd(k1, psd1, k2, psd2, k3, psd3, k4=None, psd4=None, k5=None, psd5=None, name=None):
     fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300)
     axs.semilogy(k1 / cdelt, psd1 / psd1[0], label='Frame', color='green')
@@ -493,8 +533,8 @@ def _plot_2d_hist_combined(x, y1, y2, name=None):
     # Axis formatting
     for ax in axes:
         ax.set_xlabel('MURaM', fontsize=30)
-        ax.set_xlim(0.2, 0.7)
-        ax.set_ylim(0.2, 0.7)
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
         ax.tick_params(axis='both', which='major', labelsize=22)
         ax.set_aspect('equal', adjustable='box')
         ax.set_box_aspect(1)  # enforce square axes box
@@ -553,27 +593,27 @@ if __name__ == '__main__':
 
     _plot_difference_map(convolved_true[:, :, 0, 0], convolved_pred[:, :, 0, 0], name='convolved_diff')
     _plot_difference_map(sim_array[:, :, 0], convolved_true[:, :, 1, 0], name='sim_convolved_diff')
-    _plot_difference_map(sim_array[:, :, 0], rl_reconstruction, name='sim_rl_diff')
+    #_plot_difference_map(sim_array[:, :, 0], rl_reconstruction, name='sim_rl_diff')
     _plot_difference_map(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='sim_nbd_diff')
     #_plot_difference_map(sim_array[:, :, 0], torch_mfbd[:, :, 0], name='sim_torchmfb')
 
     _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd)
-    _plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, name='psd_rl')
+    #_plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, name='psd_rl')
     #_plot_psd(k_frame, psd_frame, k_muram, psd_muram, k_nbd, psd_nbd, k_rl, psd_rl, k_torchmfbd, psd_torchmfbd, name='torchmfbd')
 
-    _plot_images(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='sim_rl_reconstruction')
+    #_plot_images(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='sim_rl_reconstruction')
 
     _plot_2d_hist(sim_array[:, :, 0], reconstructed_pred[:, :, 0], name='nbd')
-    _plot_2d_hist(sim_array[:, :, 0], rl_reconstruction, name='rl')
-    _plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='nbd_rl')
+    #_plot_2d_hist(sim_array[:, :, 0], rl_reconstruction, name='rl')
+    #_plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], rl_reconstruction, name='nbd_rl')
     #_plot_2d_hist_combined(sim_array[:, :, 0], reconstructed_pred[:, :, 0], torch_mfbd[:, :, 0], name='nbd_torchmfbd')
 
     mse_reconstructed = mse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     rmse_reconstructed = rmse(sim_array[:, :, 0], reconstructed_pred[:, :, 0])
     mse_baseline = mse(sim_array[:, :, 0], convolved_true[:, :, 1, 0])
     rmse_baseline = rmse(sim_array[:, :, 0], convolved_true[:, :, 1, 0])
-    mse_rl = mse(sim_array[:, :, 0], rl_reconstruction)
-    rmse_rl = rmse(sim_array[:, :, 0], rl_reconstruction)
+    #mse_rl = mse(sim_array[:, :, 0], rl_reconstruction)
+    #rmse_rl = rmse(sim_array[:, :, 0], rl_reconstruction)
     #mse_torch = mse(sim_array[:, :, 0], torch_mfbd[:, :, 0])
     #rmse_torch = rmse(sim_array[:, :, 0], torch_mfbd[:, :, 0])
 
@@ -581,25 +621,25 @@ if __name__ == '__main__':
                 np.max(reconstructed_pred[:, :, 0]) - np.min(reconstructed_pred[:, :, 0]))
     sim_array_norm = (sim_array[:, :, 0] - np.min(sim_array[:, :, 0])) / (
                 np.max(sim_array[:, :, 0]) - np.min(sim_array[:, :, 0]))
-    rl_reconstruction = (rl_reconstruction - np.min(rl_reconstruction)) / (
-                np.max(rl_reconstruction) - np.min(rl_reconstruction))
+    #rl_reconstruction = (rl_reconstruction - np.min(rl_reconstruction)) / (
+    #            np.max(rl_reconstruction) - np.min(rl_reconstruction))
     convolved_true_norm = (convolved_true[:, :, 1, 0] - np.min(convolved_true[:, :, 1, 0])) / (
                 np.max(convolved_true[:, :, 1, 0]) - np.min(convolved_true[:, :, 1, 0]))
     #torch_mfbd_norm = (torch_mfbd[:, :, 0] - np.min(torch_mfbd[:, :, 0])) / (
     #            np.max(torch_mfbd[:, :, 0]) - np.min(torch_mfbd[:, :, 0]))
     ssim_reconstructed = ssim(reconstructed_pred_norm, sim_array_norm, data_range=1.0)
     ssim_baseline = ssim(convolved_true_norm, sim_array_norm, data_range=1.0)
-    ssim_rl = ssim(rl_reconstruction, sim_array_norm, data_range=1.0)
+    #ssim_rl = ssim(rl_reconstruction, sim_array_norm, data_range=1.0)
     #ssim_torch = ssim(torch_mfbd_norm, sim_array_norm, data_range=1.0)
 
     print(f'MSE NBD: {mse_reconstructed:.4f}, RMSE NBD: {rmse_reconstructed:.4f}')
     print(f'MSE Baseline: {mse_baseline:.4f}, RMSE Baseline: {rmse_baseline:.4f}')
-    print(f'MSE RL: {mse_rl:.4f}, RMSE RL: {rmse_rl:.4f}')
+    #print(f'MSE RL: {mse_rl:.4f}, RMSE RL: {rmse_rl:.4f}')
     #print(f'MSE torchmfbd: {mse_torch:.4f}, RMSE torchmfbd: {rmse_torch:.4f}')
 
-    print(f'SSIM NBD: {ssim_reconstructed:.4f}, SSIM Baseline: {ssim_baseline:.4f}, SSIM RL: {ssim_rl:.4f}')
+    #print(f'SSIM NBD: {ssim_reconstructed:.4f}, SSIM Baseline: {ssim_baseline:.4f}, SSIM RL: {ssim_rl:.4f}')
     print(f'PSNR NBD: {20 * np.log10(1 / rmse_reconstructed):.4f}, PSNR Baseline: {20 * np.log10(1 / rmse_baseline):.4f}')
-    print(f'PSNR RL: {20 * np.log10(1 / rmse_rl):.4f}')
+    #print(f'PSNR RL: {20 * np.log10(1 / rmse_rl):.4f}')
     #print(f'PSNR torchmfbd: {20 * np.log10(1 / rmse_torch):.4f}')
     #print(f'SSIM torchmfbd: {ssim_torch:.4f}')
 
@@ -635,3 +675,41 @@ cbar1.ax.tick_params(labelsize=18)
 plt.tight_layout()
 plt.savefig(plot_path + f'/reconstructed_image_torchmfbd.jpg')
 plt.close()
+
+
+from nbd.data.spatially_varying_psfs import PhysicalKLPSFGenerator
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+
+neuralbd = NBDSVOutput(model_path)
+coord = torch.tensor([[511/511.5, 0/511.5]])
+psf_size = (29, 29)
+pixel_per_ds = 511.5
+x_values = torch.linspace(-(psf_size[0] // 2), psf_size[0] // 2, psf_size[0], dtype=torch.float32)
+y_values = torch.linspace(-(psf_size[1] // 2), psf_size[1] // 2, psf_size[1], dtype=torch.float32)
+x, y = torch.meshgrid(x_values, y_values, indexing='ij')
+psf_coords = torch.stack([x, y], -1)  # psf_coords, xy
+psf_coords = psf_coords / pixel_per_ds
+psf_coords = psf_coords[None, ...]
+
+psf_pred = neuralbd.load_psfs(coord, psf_coords)
+
+psf_gen = PhysicalKLPSFGenerator(n_modes=150,
+                                 psf_size=29,
+                                 fft_pad=1,
+                                 seed=30,
+                                 wavelength=450.6e-9,
+                                 telescope_diameter=1.44,
+                                 r0=0.30,
+                                 correlation_length=64
+        )
+psf_gen.initialize_field(512, 512)
+psf = psf_gen.get_psf(511, 0)
+
+_plot_true_vs_pred_psf(psf, psf_pred, idx=0)
+
+#for i in range(psf_pred.shape[-1]):
+#    plt.figure(figsize=(8,8), dpi=100)
+#    plt.imshow(psf, norm=LogNorm(vmin=psf.min(), vmax=psf.max()), origin='lower')
+#    plt.savefig(f'/glade/work/cschirninger/psf.jpg')
+#    plt.close()

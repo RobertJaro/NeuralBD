@@ -1,14 +1,14 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/NeuralBD_muram_spatially_varying_interp256_noise_freq256_crop
+base_dir: /glade/work/cschirninger/training/Muram_spatially_varying_r0_020_smooth
 meta_state: 'none'
 data:
   type: 'MURAM'
-  data_path: '/gpfs/data/fs71254/schirni/nstack/data/I_out_med.468000'
+  data_path: '/glade/work/cschirninger/data/I_out_med.468000'
   n_images: 80
   pixel_per_ds: 511.5
   x_crop: 400
   y_crop: 400
-  crop_size: 256
-  psf_type: 'default'
+  crop_size: 512
+  psf_type: 'varying'
 
 logging:
   project: NeuralBD

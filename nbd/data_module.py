@@ -78,14 +78,14 @@ class MURAMDataset(TensorDataset):
         vmin_sim, vmax_sim = sim_array.min(), sim_array.max()
         sim_array = (sim_array - vmin_sim) / (vmax_sim - vmin_sim)
 
-        sim_tensor = torch.tensor(sim_array, dtype=torch.float32).unsqueeze(-1)
-        self.high_quality = cutout(sim_tensor[..., None], x_crop, y_crop, crop_size)
-        # sim_array = np.stack([sim_array, sim_array], axis=-1)
-        # self.high_quality = sim_array
+        # sim_tensor = torch.tensor(sim_array, dtype=torch.float32).unsqueeze(-1)
+        # self.high_quality = cutout(sim_tensor[..., None], x_crop, y_crop, crop_size)
+        sim_array = np.stack([sim_array, sim_array], axis=-1)
+        self.high_quality = sim_array
 
         # Convolve images
         # images = get_convolution(self.high_quality, self.kl_psfs, n_images, noise=False)
-        images = np.load("/gpfs/data/fs71254/schirni/nstack/data/conv_spatially_varying_isoplanatic_interp_r0_015_64_crop.npy")
+        images = np.load("/glade/work/cschirninger/data/conv_spatially_varying_interp_r0_020_smooth.npy")
 
         # add noise
 
