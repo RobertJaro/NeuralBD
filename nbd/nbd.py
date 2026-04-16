@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import torch
 import wandb
 from matplotlib import pyplot as plt
@@ -15,7 +16,7 @@ class NEURALBDModule(LightningModule):
 
     def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(29, 29),
                  model_config=None, weights=None, lr_config=None, speckle=None, muram=None,
-                 psf=None, raw_frame=None, psf_type='default', **kwargs):
+                 psf=None, raw_frame=None, psf_type='default', save_path=None, **kwargs):
         super().__init__()
         self.images_shape = images_shape
         self.n_images = self.images_shape[2]
@@ -25,6 +26,7 @@ class NEURALBDModule(LightningModule):
         self.kl_psfs = psf
         self.psf_size = psf_size
         self.raw_frame = raw_frame
+        self.save_path = save_path
 
         self.learning_rate = learning_rate
 
@@ -102,7 +104,7 @@ class NEURALBDModule(LightningModule):
         if self.psf_type == 'default':
             psf = self.get_psf(area_elements)
         elif self.psf_type == 'varying':
-            psf = self.get_varying_psf(coords, psf_coords, area_elements)
+            psf = self.get_varying_psf(coords, area_elements)
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
@@ -135,10 +137,10 @@ class NEURALBDModule(LightningModule):
         return psfs / (norm + 1e-8)  # --> batch, x, y, n_images
         # return kl_psfs
 
-    def get_varying_psf(self, coords, psf_coords, area_elements):
+    def get_varying_psf(self, coords, area_elements):
         # area_elements: batch, x, y
         # self.log_psfs: batch, x, y, n_images
-        log_psfs = self.psf_model(coords, psf_coords)  # --> batch, x, y, n_images
+        log_psfs = self.psf_model(coords)  # --> batch, x, y, n_images
         psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
 
         # Normalize PSFs
@@ -167,6 +169,10 @@ class NEURALBDModule(LightningModule):
         image_loss = torch.mean(convolved_diff)
         return image_loss
 
+    #def on_load_checkpoint(self, checkpoint):
+    #    # Drop the optimizer states so LBFGS reinitializes cleanly
+    #     checkpoint["optimizer_states"] = []
+
     def configure_optimizers(self):
         if self.psf_type == 'default':
             parameters = list(self.image_model.parameters())
@@ -177,6 +183,7 @@ class NEURALBDModule(LightningModule):
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
         self.optimizer = torch.optim.Adam(parameters, lr=self.learning_rate)
+        # self.optimizer = torch.optim.LBFGS(parameters, lr=self.learning_rate, line_search_fn=None)
 
         self.scheduler = ExponentialLR(self.optimizer, gamma=(self.lr_config['end'] / self.lr_config['start']) ** (
                 1 / self.lr_config['iterations']))
@@ -208,7 +215,8 @@ class NEURALBDModule(LightningModule):
             dummy_coords = torch.ones(1, 2, dtype=torch.float32, device=convolved_pred.device) * 0.5
             dummy_psf_coords = self.psf_coords[None, :, :, :]
             dummy_area_elements = torch.ones(1, *self.psf_size, dtype=torch.float32, device=convolved_pred.device) * 0.5
-            psfs_pred = self.get_varying_psf(dummy_coords, dummy_psf_coords, dummy_area_elements)[0]
+            #psfs_pred = self.get_varying_psf(dummy_coords, dummy_psf_coords, dummy_area_elements)[0]
+            psfs_pred = self.get_varying_psf(dummy_coords, dummy_area_elements)[0]
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
@@ -225,31 +233,30 @@ class NEURALBDModule(LightningModule):
         self._plot_psfs(psfs_pred)
 
         # save PSFs and images
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
+
         if self.speckle is not None:
             self._plot_deconvolution_speckle(image_pred, self.speckle)
-            gregor_save_path = '/gpfs/data/fs71254/schirni/nstack/training/GREGOR_pretrained'
-            np.save(gregor_save_path + '/psfs_pred.npy', psfs_pred)
-            np.save(gregor_save_path + '/conv_true.npy', convolved_true)
-            np.save(gregor_save_path + '/conv_pred.npy', convolved_pred)
+            if self.save_path is not None:
+                np.save(os.path.join(self.save_path, 'psfs_pred.npy'), psfs_pred)
+                np.save(os.path.join(self.save_path, 'conv_true.npy'), convolved_true)
+                np.save(os.path.join(self.save_path, 'conv_pred.npy'), convolved_pred)
 
         elif self.muram is not None:
             self._plot_deconvolution_muram(image_pred, self.muram[256:-256, 256:-256, :])
-            save_path = '/glade/work/cschirninger/training/Muram_spatially_varying_r0_020_smooth'
-            np.save(save_path + '/psfs_pred.npy', psfs_pred)
-            np.save(save_path + '/psfs_true.npy', self.kl_psfs)
-            np.save(save_path + '/conv_true.npy', convolved_true)
-            np.save(save_path + '/conv_pred.npy', convolved_pred)
+            if self.save_path is not None:
+                np.save(os.path.join(self.save_path, 'psfs_pred.npy'), psfs_pred)
+                np.save(os.path.join(self.save_path, 'psfs_true.npy'), self.kl_psfs)
+                np.save(os.path.join(self.save_path, 'conv_true.npy'), convolved_true)
+                np.save(os.path.join(self.save_path, 'conv_pred.npy'), convolved_pred)
 
             self._plot_kl_psfs(self.kl_psfs, psfs_pred)
         else:
-            #dkist_save_path = '/gpfs/data/fs71254/schirni/nstack/training/DKIST_varying_2048'
-            #np.save(dkist_save_path + '/psfs_pred.npy', psfs_pred)
-            #np.save(dkist_save_path + '/conv_true.npy', convolved_true)
-            #np.save(dkist_save_path + '/conv_pred.npy', convolved_pred)
-            kso_save_path = '/gpfs/data/fs71254/schirni/nstack/training/KSO_2023_freq'
-            np.save(kso_save_path + '/psfs_pred.npy', psfs_pred)
-            np.save(kso_save_path + '/conv_true.npy', convolved_true)
-            np.save(kso_save_path + '/conv_pred.npy', convolved_pred)
+            if self.save_path is not None:
+                np.save(os.path.join(self.save_path, 'psfs_pred.npy'), psfs_pred)
+                np.save(os.path.join(self.save_path, 'conv_true.npy'), convolved_true)
+                np.save(os.path.join(self.save_path, 'conv_pred.npy'), convolved_pred)
 
     def _plot_deconvolution(self, convolved_true, image_pred):
         n_channels = convolved_true.shape[-1]
