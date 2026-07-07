@@ -43,16 +43,16 @@ dev = [
 ]
 
 [project.scripts]
-nbd-train = "nbd.cli.train:main"
-nbd-reconstruct = "nbd.cli.reconstruct:main"
-nbd-evaluate = "nbd.cli.evaluate:main"
+nbd-train = "neuralbd.cli.train:main"
+nbd-reconstruct = "neuralbd.cli.reconstruct:main"
+nbd-evaluate = "neuralbd.cli.evaluate:main"
 
 [project.urls]
 Repository = "https://github.com/RobertJaro/NeuralBD"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["nbd*"]
+include = ["neuralbd*"]
 exclude = ["configs*", "docs*", "examples*", "scripts*", "tests*"]
 
 [tool.ruff]

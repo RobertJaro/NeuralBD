@@ -1,6 +1,6 @@
 import numpy as np
 
-from nbd.data import BurstDataset, load_burst_from_config
+from neuralbd.data import BurstDataset, load_burst_from_config
 
 
 def test_burst_dataset_from_numpy():

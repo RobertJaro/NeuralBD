@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 
-from nbd.processing import image_coordinates
-from nbd.train.module import NeuralBDModule
+from neuralbd.processing import image_coordinates
+from neuralbd.train.module import NeuralBDModule
 
 
 class NeuralBDOutput:

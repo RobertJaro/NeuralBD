@@ -1,4 +1,4 @@
-from nbd.train.cli import main
+from neuralbd.train.cli import main
 
 
 if __name__ == "__main__":

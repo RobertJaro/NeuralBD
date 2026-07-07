@@ -3,7 +3,7 @@ import torch
 from lightning.pytorch import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from nbd.processing import image_coordinates, normalize
+from neuralbd.processing import image_coordinates, normalize
 
 
 def ensure_burst_shape(images, n_images=None, duplicate_channels=False):

@@ -3,7 +3,7 @@ import torch.distributed as dist
 from lightning.pytorch import LightningModule
 from torch.optim.lr_scheduler import ExponentialLR
 
-from nbd.models import FixedPSFModel, ImageSirenModel, NeuralBDConvolution, SirenPSFModel, SpatialPSFModel
+from neuralbd.models import FixedPSFModel, ImageSirenModel, NeuralBDConvolution, SirenPSFModel, SpatialPSFModel
 
 
 class NeuralBDModule(LightningModule):

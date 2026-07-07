@@ -1,7 +1,7 @@
 Models
 ======
 
-.. automodule:: nbd.models
+.. automodule:: neuralbd.models
    :members:
    :undoc-members:
    :no-inherited-members:

@@ -2,13 +2,13 @@ import numpy as np
 import pytest
 import torch
 
-from nbd.data import BurstDataModule, BurstDataset
-from nbd.evaluation import NeuralBDOutput
-from nbd.io import save_model_state
-from nbd.io.outputs import restore_image_order
-from nbd.train.callbacks import ProgressiveTrainingCallback
-from nbd.train import NeuralBDModule, normalize_config
-from nbd.train.pretrain import fit_pretraining_stage, pretrain_image_model
+from neuralbd.data import BurstDataModule, BurstDataset
+from neuralbd.evaluation import NeuralBDOutput
+from neuralbd.io import save_model_state
+from neuralbd.io.outputs import restore_image_order
+from neuralbd.train.callbacks import ProgressiveTrainingCallback
+from neuralbd.train import NeuralBDModule, normalize_config
+from neuralbd.train.pretrain import fit_pretraining_stage, pretrain_image_model
 
 
 def test_training_and_validation_steps():

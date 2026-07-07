@@ -1,6 +1,6 @@
 import torch
 
-from nbd.models import FixedPSFModel, ImageSirenModel, NeuralBDConvolution, SirenPSFModel, SpatialPSFModel, build_psf_grid
+from neuralbd.models import FixedPSFModel, ImageSirenModel, NeuralBDConvolution, SirenPSFModel, SpatialPSFModel, build_psf_grid
 
 
 def test_image_siren_forward_shape():

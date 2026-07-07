@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from nbd.models.siren import SirenModel
+from neuralbd.models.siren import SirenModel
 
 
 def gaussian_psf(psf_size, sigma=5.0, n_frames=1, n_channels=None):

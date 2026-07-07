@@ -1,4 +1,4 @@
-from nbd.train import normalize_config
+from neuralbd.train import normalize_config
 
 
 def test_normalize_config_sets_spatial_psf():

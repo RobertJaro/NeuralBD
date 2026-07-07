@@ -1,5 +1,5 @@
-from nbd.data.base import BurstDataModule, BurstDataset, ensure_burst_shape
-from nbd.data.loaders import (
+from neuralbd.data.base import BurstDataModule, BurstDataset, ensure_burst_shape
+from neuralbd.data.loaders import (
     load_burst_from_config,
     load_dkist_burst,
     load_fits_burst,

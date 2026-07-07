@@ -1,7 +1,7 @@
 Data
 ====
 
-.. automodule:: nbd.data
+.. automodule:: neuralbd.data
    :members:
    :undoc-members:
    :no-inherited-members:

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from nbd.models.siren import SirenModel
+from neuralbd.models.siren import SirenModel
 
 
 class ImageSirenModel(nn.Module):

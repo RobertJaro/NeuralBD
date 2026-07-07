@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nbd.processing import subframe
+from neuralbd.processing import subframe
 
 
 def _optional_astropy_fits():

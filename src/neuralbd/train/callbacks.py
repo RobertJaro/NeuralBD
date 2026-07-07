@@ -4,10 +4,10 @@ from pathlib import Path
 from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.utilities import rank_zero_only
 
-from nbd.data import load_numpy_burst
-from nbd.io import save_model_state, save_validation_outputs
-from nbd.io.outputs import restore_image_order
-from nbd.models import build_psf_grid
+from neuralbd.data import load_numpy_burst
+from neuralbd.io import save_model_state, save_validation_outputs
+from neuralbd.io.outputs import restore_image_order
+from neuralbd.models import build_psf_grid
 
 
 def _odd_size(value):

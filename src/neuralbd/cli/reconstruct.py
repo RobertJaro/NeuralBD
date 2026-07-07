@@ -2,7 +2,7 @@ import argparse
 
 import numpy as np
 
-from nbd.evaluation import NeuralBDOutput
+from neuralbd.evaluation import NeuralBDOutput
 
 
 def main(argv=None):

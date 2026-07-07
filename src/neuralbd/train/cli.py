@@ -6,11 +6,11 @@ from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-from nbd.data import BurstDataModule, BurstDataset, load_burst_from_config
-from nbd.train.callbacks import NeuralBDOutputCallback, ProgressiveTrainingCallback
-from nbd.train.config import load_config
-from nbd.train.module import NeuralBDModule
-from nbd.train.pretrain import fit_pretraining_stage
+from neuralbd.data import BurstDataModule, BurstDataset, load_burst_from_config
+from neuralbd.train.callbacks import NeuralBDOutputCallback, ProgressiveTrainingCallback
+from neuralbd.train.config import load_config
+from neuralbd.train.module import NeuralBDModule
+from neuralbd.train.pretrain import fit_pretraining_stage
 
 
 def build_datamodule(config):

@@ -1,7 +1,7 @@
 Training
 ========
 
-.. automodule:: nbd.train
+.. automodule:: neuralbd.train
    :members:
    :undoc-members:
    :no-inherited-members:
