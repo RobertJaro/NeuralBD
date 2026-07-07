@@ -1,5 +1,7 @@
 import argparse
 import os
+import sys
+import numpy as np
 
 import torch
 import yaml
@@ -25,10 +27,20 @@ if __name__ == '__main__':
     base_dir = config['base_dir']
     os.makedirs(base_dir, exist_ok=True)
 
+
+    def _register_numpy_pickle_aliases():
+        # NumPy 2 pickles may reference numpy._core, while NumPy 1 exposes numpy.core.
+        if not hasattr(np, "_core"):
+            sys.modules.setdefault("numpy._core", np.core)
+            sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
+            sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
+            sys.modules.setdefault("numpy._core.umath", np.core.umath)
+
     # Init Dataset
     save_path = os.path.join(base_dir, 'data_module.pl')
     data_config = config['data']
     if os.path.exists(save_path) and not args.reload:
+        _register_numpy_pickle_aliases()
         data_module = torch.load(save_path, weights_only=False)
     else:
         data_module = NeuralBDDataModule(**data_config)
@@ -39,6 +51,12 @@ if __name__ == '__main__':
     epochs = training_config['epochs'] if 'epochs' in training_config else 10000
     log_every_n_steps = training_config['log_every_n_steps'] if 'log_every_n_steps' in training_config else None
     ckpt_path = training_config['meta_path'] if 'meta_path' in training_config else 'last'
+    model_config = dict(config['model'])
+    if 'optimizer_config' not in model_config:
+        if 'optimizer_config' in training_config:
+            model_config['optimizer_config'] = training_config['optimizer_config']
+        elif 'optimizer' in training_config:
+            model_config['optimizer_config'] = {'name': training_config['optimizer']}
 
     # Wandb Logger
     logging_config = config['logging']
@@ -52,7 +70,8 @@ if __name__ == '__main__':
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'], weights=data_module.contrast_weights, speckle=data_module.speckle,
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
-            **config['model'])
+            save_path=base_dir,
+            **model_config)
 
     elif data_config['type'] == 'MURAM':
         neuralbd = NEURALBDModule(
@@ -61,14 +80,16 @@ if __name__ == '__main__':
             muram=data_module.muram, psf=data_module.psfs,
             sampling=data_config['psf_type'],
             psf_type=data_config['psf_type'],
-            **config['model'])
+            save_path=base_dir,
+            **model_config)
 
     elif data_config['type'] == 'DKIST':
         neuralbd = NEURALBDModule(
             images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
             pixel_per_ds=data_config['pixel_per_ds'],
             sampling=data_config['psf_type'], psf_type=data_config['psf_type'],
-            **config['model'])
+            save_path=base_dir,
+            **model_config)
 
     elif data_config['type'] == 'KSO':
         neuralbd = NEURALBDModule(
@@ -76,18 +97,29 @@ if __name__ == '__main__':
             pixel_per_ds=data_config['pixel_per_ds'],
             sampling=data_config['psf_type'],
             psf_type=data_config['psf_type'],
-            **config['model'])
+            save_path=base_dir,
+            **model_config)
+
+    elif data_config['type'] == 'SUIT':
+        neuralbd = NEURALBDModule(
+            images_shape=[data_config['crop_size'], data_config['crop_size'], data_config['n_images'], 2],
+            pixel_per_ds=data_config['pixel_per_ds'],
+            sampling=data_config['psf_type'],
+            psf_type=data_config['psf_type'],
+            save_path=base_dir,
+            **model_config)
 
     else:
         raise ValueError('Unknown data type')
 
     if config['meta_state'] == 'loadme':
         meta_model_path = config['base_dir']+'/meta_model.pth'
+        _register_numpy_pickle_aliases()
         meta_ckpt = torch.load(meta_model_path, map_location='cpu')
         neuralbd.image_model.load_state_dict(meta_ckpt)
-        print(f"Loaded meta model from {meta_model_path}")
+        print(f"-------------------------- Loaded meta model from {meta_model_path} --------------------------")
     elif config['meta_state'] == 'none':
-        print("Continuing without loading meta model")
+        print("-------------------------- Continuing without loading meta model --------------------------")
     else:
         raise ValueError('Unknown meta_state option')
 

@@ -1,7 +1,17 @@
 import numpy as np
+import sys
 import torch
 from torch import nn
 from tqdm import tqdm
+
+
+def _register_numpy_pickle_aliases():
+    # NumPy 2 pickles may reference numpy._core, while NumPy 1 exposes numpy.core.
+    if not hasattr(np, "_core"):
+        sys.modules.setdefault("numpy._core", np.core)
+        sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
+        sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
+        sys.modules.setdefault("numpy._core.umath", np.core.umath)
 
 
 class NBDOutput:
@@ -9,6 +19,7 @@ class NBDOutput:
     def __init__(self, model_path, device=None):
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+        _register_numpy_pickle_aliases()
         state = torch.load(model_path, map_location=self.device, weights_only=False)
 
         self.image_coords = state['image_coords']
@@ -42,6 +53,7 @@ class NBDSVOutput:
     def __init__(self, model_path, device=None):
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+        _register_numpy_pickle_aliases()
         state = torch.load(model_path, map_location=self.device, weights_only=False)
 
         self.image_coords = state['image_coords']
@@ -70,8 +82,37 @@ class NBDSVOutput:
 
         return output_image
 
-    def load_psfs(self, coords, psf_coords):
-        log_psfs = self.psf_model(coords, psf_coords)  # --> batch, x, y, n_images
+    def load_psfs(self, coords):
+        if isinstance(coords, np.ndarray):
+            coords = torch.from_numpy(coords).float()
+        elif not isinstance(coords, torch.Tensor):
+            coords = torch.tensor(coords, dtype=torch.float32)
+        else:
+            coords = coords.float()
+
+        coords = coords.to(self.device)
+
+        psf_module = self.psf_model.module if isinstance(self.psf_model, nn.DataParallel) else self.psf_model
+        d_in_features = psf_module.d_in.in_features
+
+        # Compatibility with checkpoints trained with encoded PSF inputs.
+        if coords.shape[-1] != d_in_features:
+            if coords.shape[-1] == 2 and hasattr(psf_module, "posenc"):
+                encoded = psf_module.posenc(coords)
+                if encoded.shape[-1] == d_in_features:
+                    coords = encoded
+                else:
+                    raise RuntimeError(
+                        f"PSF input mismatch: got {coords.shape[-1]} features, "
+                        f"d_in expects {d_in_features}, and posenc gives {encoded.shape[-1]}."
+                    )
+            else:
+                raise RuntimeError(
+                    f"PSF input mismatch: got {coords.shape[-1]} features, "
+                    f"but d_in expects {d_in_features}."
+                )
+
+        log_psfs = self.psf_model(coords)  # --> batch, x, y, n_images
         psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
         psfs = psfs[0, ...]
 
