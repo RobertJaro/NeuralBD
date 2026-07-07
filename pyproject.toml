@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuralbd"
+version = "0.1.0"
+description = "Neural blind deconvolution for solar image bursts"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "GPL-3.0-only"
+authors = [
+  { name = "Robert Jarolim" }
+]
+keywords = ["solar physics", "blind deconvolution", "neural fields", "SIREN"]
+dependencies = [
+  "torch>=2.6",
+  "lightning>=2.6.4",
+  "numpy>=1.26",
+  "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+io = [
+  "astropy>=6",
+]
+viz = [
+  "matplotlib>=3.8",
+  "wandb>=0.17",
+]
+docs = [
+  "sphinx>=7.2",
+  "myst-parser>=2",
+  "sphinx-autodoc-typehints>=2",
+  "sphinx-copybutton>=0.5",
+  "pydata-sphinx-theme>=0.15",
+]
+dev = [
+  "pytest>=8",
+  "ruff>=0.5",
+  "build>=1.2",
+  "twine>=5",
+]
+
+[project.scripts]
+nbd-train = "nbd.cli.train:main"
+nbd-reconstruct = "nbd.cli.reconstruct:main"
+nbd-evaluate = "nbd.cli.evaluate:main"
+
+[project.urls]
+Repository = "https://github.com/RobertJaro/NeuralBD"
+
+[tool.setuptools.packages.find]
+include = ["nbd*"]
+exclude = ["configs*", "docs*", "examples*", "scripts*", "tests*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

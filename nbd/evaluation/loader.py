@@ -1,84 +1,53 @@
 import numpy as np
 import torch
-from torch import nn
-from tqdm import tqdm
+
+from nbd.processing import image_coordinates
+from nbd.train.module import NeuralBDModule
 
 
-class NBDOutput:
+class NeuralBDOutput:
+    def __init__(self, checkpoint_path, device=None):
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.state = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        self.metadata = self.state.get("metadata", {})
+        self.image_coords = self._default_coords()
+        self.module = self._load_module()
+        self.image_model = self.module.image_model
+        self.psf_model = self.module.psf_model
 
-    def __init__(self, model_path, device=None):
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    def _load_module(self):
+        if "model_state_dict" in self.state:
+            config = self.state["config"]
+            images_shape = self.metadata["images_shape"]
+            module = NeuralBDModule.from_config(config, images_shape=images_shape)
+            model_state = self.state["model_state_dict"]
+            if "image" in model_state and "psf" in model_state:
+                module.image_model.load_state_dict(model_state["image"])
+                module.psf_model.load_state_dict(model_state["psf"])
+            else:
+                module.load_state_dict(model_state)
+            return module.to(self.device).eval()
 
-        state = torch.load(model_path, map_location=self.device, weights_only=False)
+        module = torch.nn.Module()
+        module.image_model = self.state["image_model"].to(self.device).eval()
+        module.psf_model = self.state.get("psf_model")
+        if module.psf_model is not None:
+            module.psf_model = module.psf_model.to(self.device).eval()
+        return module
 
-        self.image_coords = state['image_coords']
-        self.model = state['image_model']
-        self.model = nn.DataParallel(self.model)
-        self.model.eval()
+    def _default_coords(self):
+        if "images_shape" in self.metadata:
+            pixel_per_ds = self.metadata.get("pixel_per_ds", 1.0)
+            return image_coordinates(self.metadata["images_shape"], pixel_per_ds=pixel_per_ds)
+        return self.state.get("image_coords")
 
-    def load(self, coords, batch_size=2048, progress=True):
-        batch_size = batch_size * torch.cuda.device_count() if torch.cuda.is_available() else 1024
-        coordinates_tensor = torch.from_numpy(coords).float().view(-1, 2)
-
-        n_batches = int(np.ceil(coordinates_tensor.shape[0] / batch_size))
-        iter_ = tqdm(range(n_batches)) if progress else range(n_batches)
-        output_image = []
-        for i in iter_:
-            batch_coords = coordinates_tensor[i * batch_size:(i + 1) * batch_size].to(self.device)
-
-            pred = self.model(batch_coords)
-
-            output_image += [pred.detach().cpu().numpy()]
-        output_image = np.concatenate(output_image, axis=0).reshape((coords.shape[0], coords.shape[1], 2))
-
-        return output_image
-
-    def load_reconstructed_img(self, **kwargs):
-        return self.load(self.image_coords)
-
-
-class NBDSVOutput:
-
-    def __init__(self, model_path, device=None):
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        state = torch.load(model_path, map_location=self.device, weights_only=False)
-
-        self.image_coords = state['image_coords']
-        self.img_model = state['image_model']
-        self.img_model = nn.DataParallel(self.img_model)
-        self.img_model.eval()
-        self.psf_model = state['psf_model']
-        self.psf_model = nn.DataParallel(self.psf_model)
-        self.psf_model.eval()
-
-
-    def load_img(self, coords, batch_size=2048, progress=True):
-        batch_size = batch_size * torch.cuda.device_count() if torch.cuda.is_available() else 1024
-        coordinates_tensor = torch.from_numpy(coords).float().view(-1, 2)
-
-        n_batches = int(np.ceil(coordinates_tensor.shape[0] / batch_size))
-        iter_ = tqdm(range(n_batches)) if progress else range(n_batches)
-        output_image = []
-        for i in iter_:
-            batch_coords = coordinates_tensor[i * batch_size:(i + 1) * batch_size].to(self.device)
-
-            pred = self.img_model(batch_coords)
-
-            output_image += [pred.detach().cpu().numpy()]
-        output_image = np.concatenate(output_image, axis=0).reshape((coords.shape[0], coords.shape[1], 2))
-
-        return output_image
-
-    def load_psfs(self, coords, psf_coords):
-        log_psfs = self.psf_model(coords, psf_coords)  # --> batch, x, y, n_images
-        psfs = torch.exp(log_psfs)  # --> batch, x, y, n_images
-        psfs = psfs[0, ...]
-
-        # Normalize PSFs
-        norm = psfs.sum(dim=(0, 1), keepdim=True)  # --> 1, 1, n_images
-
-        return psfs / (norm + 1e-8)
-
-    def load_reconstructed_img(self, **kwargs):
-        return self.load_img(self.image_coords)
+    def reconstruct(self, coords=None, batch_size=8192):
+        coords = self.image_coords if coords is None else coords
+        if coords is None:
+            raise ValueError("No coordinates provided and checkpoint does not contain image_coords")
+        coords_tensor = torch.as_tensor(coords, dtype=torch.float32, device=self.device).reshape(-1, 2)
+        chunks = []
+        with torch.no_grad():
+            for idx in range(0, coords_tensor.shape[0], batch_size):
+                chunks.append(self.image_model(coords_tensor[idx:idx + batch_size]).detach().cpu().numpy())
+        return np.concatenate(chunks, axis=0).reshape(coords.shape[0], coords.shape[1], -1)
