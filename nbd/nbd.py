@@ -3,6 +3,7 @@ import os
 import torch
 import wandb
 from matplotlib import pyplot as plt
+from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning import LightningModule
 from torch import nn
@@ -12,11 +13,44 @@ from nbd.data.editor import gaussian_psf
 from nbd.model import ImageModel, PSFModel
 
 
+def _get_optimizer_name(optimizer_config):
+    if isinstance(optimizer_config, str):
+        return optimizer_config.lower()
+    optimizer_config = optimizer_config or {}
+    return optimizer_config.get('name', optimizer_config.get('optimizer', optimizer_config.get('type', 'adam'))).lower()
+
+
+def _build_optimizer(parameters, learning_rate, optimizer_config):
+    if isinstance(optimizer_config, str):
+        optimizer_config = {'name': optimizer_config}
+    optimizer_config = optimizer_config or {}
+    optimizer_name = _get_optimizer_name(optimizer_config)
+
+    if optimizer_name == 'adam':
+        return torch.optim.Adam(parameters, lr=learning_rate)
+    if optimizer_name == 'ssbroyden':
+        from scimba_torch.optimizers.ssbroyden import SSBroyden
+
+        return SSBroyden(
+            parameters,
+            lr=1.0,
+            tolerance_grad=float(
+                optimizer_config.get(
+                    'ssbroyden_tolerance_grad',
+                    optimizer_config.get('tolerance_grad', 1e-7),
+                )
+            ),
+            method="ssbroyden",
+        )
+
+    raise ValueError(f'Unknown optimizer: {optimizer_name}')
+
+
 class NEURALBDModule(LightningModule):
 
     def __init__(self, images_shape, pixel_per_ds, learning_rate=1e-4, psf_size=(29, 29),
                  model_config=None, weights=None, lr_config=None, speckle=None, muram=None,
-                 psf=None, raw_frame=None, psf_type='default', save_path=None, **kwargs):
+                 psf=None, raw_frame=None, psf_type='default', save_path=None, optimizer_config=None, **kwargs):
         super().__init__()
         self.images_shape = images_shape
         self.n_images = self.images_shape[2]
@@ -29,6 +63,7 @@ class NEURALBDModule(LightningModule):
         self.save_path = save_path
 
         self.learning_rate = learning_rate
+        self.optimizer_config = {} if optimizer_config is None else optimizer_config
 
         # Create PSF coordinates for sampling (Grid sampling)
         x_values = torch.linspace(-(psf_size[0] // 2), psf_size[0] // 2, psf_size[0], dtype=torch.float32)
@@ -169,10 +204,6 @@ class NEURALBDModule(LightningModule):
         image_loss = torch.mean(convolved_diff)
         return image_loss
 
-    #def on_load_checkpoint(self, checkpoint):
-    #    # Drop the optimizer states so LBFGS reinitializes cleanly
-    #     checkpoint["optimizer_states"] = []
-
     def configure_optimizers(self):
         if self.psf_type == 'default':
             parameters = list(self.image_model.parameters())
@@ -182,12 +213,19 @@ class NEURALBDModule(LightningModule):
         else:
             raise ValueError(f'Unknown psf method: {self.psf_type}')
 
-        self.optimizer = torch.optim.Adam(parameters, lr=self.learning_rate)
-        # self.optimizer = torch.optim.LBFGS(parameters, lr=self.learning_rate, line_search_fn=None)
+        self.optimizer = _build_optimizer(parameters, self.learning_rate, self.optimizer_config)
+
+        if _get_optimizer_name(self.optimizer_config) == 'ssbroyden':
+            return self.optimizer
 
         self.scheduler = ExponentialLR(self.optimizer, gamma=(self.lr_config['end'] / self.lr_config['start']) ** (
                 1 / self.lr_config['iterations']))
         return [self.optimizer], [self.scheduler]
+
+    def on_load_checkpoint(self, checkpoint):
+        if _get_optimizer_name(self.optimizer_config) == 'ssbroyden':
+            checkpoint['optimizer_states'] = []
+            checkpoint['lr_schedulers'] = []
 
     def validation_step(self, batch, batch_idx):
         convolved_true, coords = batch
@@ -346,7 +384,8 @@ class NEURALBDModule(LightningModule):
         fig, axs = plt.subplots(1, n_samples, figsize=(2 * n_samples, 4), dpi=300)
         for i in range(n_samples):
             ax = axs[i]
-            im = ax.imshow(np.sqrt(psfs[:, :, i]), origin='lower', vmax=1, norm='log')
+            psf = np.sqrt(psfs[:, :, i])
+            im = ax.imshow(psf, origin='lower', norm=self._log_norm(psf))
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)
@@ -356,20 +395,28 @@ class NEURALBDModule(LightningModule):
         wandb.log({'PSFs': fig})
         plt.close()
 
+    def _log_norm(self, image):
+        positive = image[image > 0]
+        if positive.size == 0:
+            return None
+        return LogNorm(vmin=positive.min(), vmax=max(positive.max(), 1))
+
     def _plot_kl_psfs(self, kl_psfs, psfs_pred):
         n_images = psfs_pred.shape[-1]
         n_samples = min(5, n_images)
         fig, axs = plt.subplots(2, n_samples, figsize=(2 * n_samples, 4), dpi=300)
         for i in range(n_samples):
             ax = axs[0, i]
-            im = ax.imshow(np.sqrt(kl_psfs[:, :, i]), origin='lower', vmax=1, norm='log')
+            psf = np.sqrt(kl_psfs[:, :, i])
+            im = ax.imshow(psf, origin='lower', norm=self._log_norm(psf))
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)
             ax.set_title(f'PSF {i:02d}')
 
             ax = axs[1, i]
-            im = ax.imshow(np.sqrt(psfs_pred[:, :, i]), origin='lower', vmax=1, norm='log')
+            psf = np.sqrt(psfs_pred[:, :, i])
+            im = ax.imshow(psf, origin='lower', norm=self._log_norm(psf))
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad="2%")
             fig.colorbar(im, cax=cax)
