@@ -1,14 +1,19 @@
 from abc import ABC, abstractmethod
+import warnings
 
 from scipy.signal import convolve2d
 import numpy as np
 import torch
+from astropy.io import fits
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.visualization import ImageNormalize, LinearStretch
 from scipy.ndimage import shift
 from skimage import filters
 from sunpy.coordinates import frames
 from sunpy.map import Map, make_fitswcs_header
+from sunpy.map.mapbase import GenericMap
+from sunpy.map import all_coordinates_from_map
 import torch.nn.functional as F
 
 from nbd.data.KL_modes import KL
@@ -50,6 +55,170 @@ class ReadSimulationEditor(Editor):
 
         return sim_map
 
+
+class LoadMapEditor(Editor):
+    """
+    Load SunPy Map editor.
+    """
+
+    def call(self, data, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            s_map = Map(data)
+            s_map.meta["timesys"] = "tai"
+            return s_map, {"path": data}
+
+
+class KSOPrepEditor(Editor):
+    """
+    KSO data preparation editor.
+    """
+
+    def __init__(self, add_rotation=False):
+        self.add_rotation = add_rotation
+        super().__init__()
+
+    def call(self, kso_map, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            kso_map.meta["waveunit"] = "AA"
+            kso_map.meta["arcs_pp"] = kso_map.scale[0].value
+            if "exptime" not in kso_map.meta and "exp_time" in kso_map.meta:
+                kso_map.meta["exptime"] = kso_map.meta["exp_time"] / 1000
+
+            if self.add_rotation:
+                angle = -kso_map.meta.get("angle", 0)
+            else:
+                angle = 0
+            c = np.cos(np.deg2rad(angle))
+            s = np.sin(np.deg2rad(angle))
+
+            kso_map.meta["PC1_1"] = c
+            kso_map.meta["PC1_2"] = -s
+            kso_map.meta["PC2_1"] = s
+            kso_map.meta["PC2_2"] = c
+            return kso_map
+
+
+class LimbDarkeningCorrectionEditor(Editor):
+    """
+    Limb darkening correction editor.
+    """
+
+    def __init__(self, limb_offset=0.99):
+        self.limb_offset = limb_offset
+
+    def call(self, s_map, **kwargs):
+        coords = all_coordinates_from_map(s_map)
+        radial_distance = (np.sqrt(coords.Tx ** 2 + coords.Ty ** 2) / s_map.rsun_obs).value
+        radial_distance[radial_distance >= self.limb_offset] = np.NaN
+        ideal_correction = np.cos(radial_distance * np.pi / 2)
+
+        condition = np.logical_not(np.isnan(np.ravel(ideal_correction)))
+        map_list = np.ravel(s_map.data)[condition]
+        correction_list = np.ravel(ideal_correction)[condition]
+
+        fit = np.polyfit(correction_list, map_list, 4)
+        poly_fit = np.poly1d(fit)
+
+        map_correction = poly_fit(ideal_correction)
+        corrected_map = s_map.data / map_correction
+        return Map(corrected_map, s_map.meta)
+
+
+class MapToDataEditor(Editor):
+    """
+    SunPy map to data editor.
+    """
+
+    def call(self, s_map, **kwargs):
+        return s_map.data, {"header": s_map.meta}
+
+
+class ImageNormalizeEditor(Editor):
+    """
+    Image normalization editor.
+    """
+
+    def __init__(self, vmin=None, vmax=None, stretch=LinearStretch()):
+        self.norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch, clip=True)
+
+    def call(self, data, **kwargs):
+        data = self.norm(data).data * 2 - 1
+        return data
+
+
+class NanEditor(Editor):
+    """
+    Replace NaN values editor.
+    """
+
+    def __init__(self, nan=0):
+        self.nan = nan
+
+    def call(self, data, **kwargs):
+        data = np.nan_to_num(data, nan=self.nan)
+        return data
+
+
+class LoadKSOMapEditor(Editor):
+    """
+    Load a KSO SunPy map and normalize metadata for downstream processing.
+
+    Parameters
+    ----------
+    add_rotation : bool, optional
+        If True, apply the negative header angle into the PC rotation matrix.
+    """
+
+    def __init__(self, add_rotation=True):
+        self.add_rotation = add_rotation
+
+    @staticmethod
+    def _load_map(source):
+        if isinstance(source, GenericMap):
+            return source
+
+        try:
+            return Map(source)
+        except Exception:
+            data, header = fits.getdata(source, header=True)
+
+            if "cunit1" not in header:
+                header["cunit1"] = "arcsec"
+            if "cunit2" not in header:
+                header["cunit2"] = "arcsec"
+
+            if "cdelt1" not in header and "arcs_pp" in header:
+                header["cdelt1"] = header["arcs_pp"]
+            if "cdelt2" not in header and "arcs_pp" in header:
+                header["cdelt2"] = header["arcs_pp"]
+
+            return Map(data, header)
+
+    def call(self, source, **kwargs):
+        kso_map = self._load_map(source)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            kso_map.meta["waveunit"] = "AA"
+            kso_map.meta["arcs_pp"] = kso_map.scale[0].value
+            if "exptime" not in kso_map.meta and "exp_time" in kso_map.meta:
+                kso_map.meta["exptime"] = kso_map.meta["exp_time"] / 1000
+
+            if self.add_rotation:
+                angle = -kso_map.meta.get("angle", 0)
+            else:
+                angle = 0
+            c = np.cos(np.deg2rad(angle))
+            s = np.sin(np.deg2rad(angle))
+
+            kso_map.meta["PC1_1"] = c
+            kso_map.meta["PC1_2"] = -s
+            kso_map.meta["PC2_1"] = s
+            kso_map.meta["PC2_2"] = c
+
+            return kso_map
 
 def PSF(complx_pupil):
     PSF = torch.fft.ifftshift(torch.fft.fft2(torch.fft.fftshift(complx_pupil)))
@@ -261,3 +430,47 @@ def generate_gaussian_psf(size, sigma):
     psf = np.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
     psf /= np.sum(psf)  # Normalize to make it a proper PSF
     return psf
+
+
+def limb_darkening_correction(s_map, limb_offset=0.99, poly_order=4):
+    """
+    Apply limb darkening correction to a SunPy map.
+
+    Parameters
+    ----------
+    s_map : sunpy.map.Map
+        Input solar map.
+    limb_offset : float, optional
+        Radial cutoff in units of observed solar radius. Pixels at or above this
+        value are ignored for fitting.
+    poly_order : int, optional
+        Polynomial degree used to fit intensity as a function of ideal correction.
+
+    Returns
+    -------
+    sunpy.map.Map
+        Limb-darkening corrected map.
+    """
+    coords = all_coordinates_from_map(s_map)
+    radial_distance = (np.sqrt(coords.Tx ** 2 + coords.Ty ** 2) / s_map.rsun_obs).value
+
+    valid_radius = radial_distance < limb_offset
+    ideal_correction = np.cos(radial_distance * np.pi / 2)
+    ideal_correction[~valid_radius] = np.nan
+
+    condition = np.isfinite(ideal_correction) & np.isfinite(s_map.data)
+    map_list = s_map.data[condition]
+    correction_list = ideal_correction[condition]
+
+    if map_list.size == 0:
+        raise ValueError("No valid pixels available for limb darkening fit.")
+
+    fit = np.polyfit(correction_list, map_list, poly_order)
+    poly_fit = np.poly1d(fit)
+
+    map_correction = poly_fit(ideal_correction)
+    map_correction[~np.isfinite(map_correction)] = np.nan
+    map_correction[map_correction == 0] = np.nan
+
+    corrected_map = s_map.data / map_correction
+    return Map(corrected_map, s_map.meta)

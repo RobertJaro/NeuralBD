@@ -3,23 +3,31 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+from sunpy.map import all_coordinates_from_map
+from astropy.visualization import AsinhStretch
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from astropy.io import fits
 
-from nbd.data.editor import cutout
+from nbd.data.editor import LoadKSOMapEditor, NanEditor
 from nbd.evaluation.loader import NBDOutput
-from nbd.evaluation.psd import power_spectrum, azimuthal_power_spectrum
+from nbd.evaluation.psd import power_spectrum
 
 parser = argparse.ArgumentParser(description='Create evaluation plots for NBD and KSO data')
 parser.add_argument('--base_path', type=str, help='the path to the base directory')
+parser.add_argument(
+    '--fits_path',
+    type=str,
+    default='/gpfs/data/fs71254/schirni/highcad/ha20190731_070000.183.fts',
+    help='reference KSO FITS file used for radial normalization metadata',
+)
+parser.add_argument('--limb_offset', type=float, default=0.99, help='solar radius cutoff for radial normalization')
+parser.add_argument('--skip_radial_normalization', action='store_true', help='disable FITS-backed radial normalization')
 
 args = parser.parse_args()
 
-
 base_path = args.base_path
-plot_path = base_path + '/plots/final'
+plot_path = base_path + '/plots/limb_dark'
 os.makedirs(plot_path, exist_ok=True)
 
 cdelt = 1.04 # arcsec/pixel
@@ -43,9 +51,9 @@ psfs_pred = np.load(base_path+'/psfs_pred.npy')
 #convolved_pred = convolved_pred[700:-900, 1100:1548, :, :]
 
 # crop2
-reconstructed_pred = reconstructed_pred[800:1050, 1150:1400, :]
-convolved_true = convolved_true[800:1050, 1150:1400, :, :]
-convolved_pred = convolved_pred[800:1050, 1150:1400, :, :]
+#reconstructed_pred = reconstructed_pred[800:1050, 1150:1400, :]
+#convolved_true = convolved_true[800:1050, 1150:1400, :, :]
+#convolved_pred = convolved_pred[800:1050, 1150:1400, :, :]
 
 # crop3
 #reconstructed_pred = reconstructed_pred[900:950, 1250:1300, :]
@@ -62,10 +70,69 @@ convolved_pred = convolved_pred[800:1050, 1150:1400, :, :]
 #convolved_true = convolved_true[1000:1100, 50:150, :, :]
 #convolved_pred = convolved_pred[1000:1100, 50:150, :, :]
 
+
+def _radial_correction_template(reference_map, limb_offset):
+    coords = all_coordinates_from_map(reference_map)
+    radial_distance = (np.sqrt(coords.Tx ** 2 + coords.Ty ** 2) / reference_map.rsun_obs).value
+    radial_distance[radial_distance >= limb_offset] = np.nan
+    return np.cos(radial_distance * np.pi / 2)
+
+
+def _correct_radial_slice(image, ideal_correction, poly_order=4):
+    image = np.asarray(image, dtype=np.float64)
+    condition = np.logical_not(np.isnan(np.ravel(ideal_correction)))
+    condition &= np.isfinite(np.ravel(image))
+    map_list = np.ravel(image)[condition]
+    correction_list = np.ravel(ideal_correction)[condition]
+    if map_list.size <= poly_order:
+        raise ValueError('Not enough valid pixels available for radial normalization fit.')
+    fit = np.polyfit(correction_list, map_list, poly_order)
+    poly_fit = np.poly1d(fit)
+    map_correction = poly_fit(ideal_correction)
+    map_correction[~np.isfinite(map_correction)] = np.nan
+    map_correction[map_correction == 0] = np.nan
+    return image / map_correction
+
+
+def _apply_radial_normalization(data, reference_map, limb_offset):
+    if data.shape[:2] != reference_map.data.shape:
+        raise ValueError(
+            f'Cannot apply radial normalization: data shape {data.shape[:2]} '
+            f'does not match FITS map shape {reference_map.data.shape}.'
+        )
+    ideal_correction = _radial_correction_template(reference_map, limb_offset)
+    corrected = np.empty(data.shape, dtype=np.float64)
+    image_axes = (slice(None), slice(None))
+    if data.ndim == 2:
+        return _correct_radial_slice(data, ideal_correction)
+    for index in np.ndindex(data.shape[2:]):
+        corrected[image_axes + index] = _correct_radial_slice(data[image_axes + index], ideal_correction)
+    return corrected
+
+
+def _normalize_to_unit_interval(data):
+    data = np.asarray(data, dtype=np.float64)
+    vmin = np.nanmin(data)
+    vmax = np.nanmax(data)
+    if vmax == vmin:
+        return np.zeros_like(data)
+    data = (data - vmin) / (vmax - vmin)
+    return NanEditor(nan=0).call(data)
+
+
+if not args.skip_radial_normalization:
+    reference_map = LoadKSOMapEditor(add_rotation=False).call(args.fits_path)
+    convolved_true = _apply_radial_normalization(convolved_true, reference_map, args.limb_offset)
+    convolved_pred = _apply_radial_normalization(convolved_pred, reference_map, args.limb_offset)
+    reconstructed_pred = _apply_radial_normalization(reconstructed_pred, reference_map, args.limb_offset)
+
 # calculate power spectral density
 k_frame, psd_frame = power_spectrum(convolved_true[:, :, 0, 0] + 1e-10)  # add small value to avoid division by zero
 k_nbd, psd_nbd = power_spectrum(reconstructed_pred[:, :, 0])
 
+convolved_true = _normalize_to_unit_interval(convolved_true)
+convolved_pred = _normalize_to_unit_interval(convolved_pred)
+reconstructed_pred = _normalize_to_unit_interval(reconstructed_pred)
 
 def _plot_hists(x, y, bins, title_x=None, title_y=None, name=None):
     fig, ax = plt.subplots(1, 2, figsize=(10, 5), dpi=300)
@@ -102,34 +169,34 @@ def _plot_image(x, y, name=None):
                        extent=[0, x.shape[0] * cdelt, 0, y.shape[0] * cdelt], vmin=vmin, vmax=vmax)
     im1 = ax[1].imshow(y, cmap='gray', origin='lower',
                        extent=[0, x.shape[0] * cdelt, 0, y.shape[0] * cdelt], vmin=vmin, vmax=vmax)
-
+    #
     # Labels and titles
     [axs.set_xlabel('Distance [arcsec]', fontsize=16) for axs in ax]
     ax[0].set_ylabel('Distance [arcsec]', fontsize=16)
     ax[1].set_yticks([])
     ax[0].set_title('Original', fontsize=20, fontweight='bold')
-    ax[1].set_title('NeuralBD', fontsize=20, fontweight='bold')
-
+    ax[1].set_title('NeuralBD+', fontsize=20, fontweight='bold')
+    #
     # Ticks
     for axs in ax:
         axs.xaxis.set_major_locator(MaxNLocator(nbins=5, integer=True))
         axs.yaxis.set_major_locator(MaxNLocator(nbins=5, integer=True))
         axs.tick_params(axis='both', which='major', labelsize=14)
-
+    #
     # Add colorbar to first image
     divider0 = make_axes_locatable(ax[0])
     cax0 = divider0.append_axes("right", size="5%", pad=0.05)
     cbar0 = fig.colorbar(im0, cax=cax0)
     cbar0.set_label('normalized Intensity', fontsize=20)
     cbar0.ax.tick_params(labelsize=12)
-
+    #
     # Add colorbar to second image
     divider1 = make_axes_locatable(ax[1])
     cax1 = divider1.append_axes("right", size="5%", pad=0.05)
     cbar1 = fig.colorbar(im1, cax=cax1)
     cbar1.set_label('normalized Intensity', fontsize=20)
     cbar1.ax.tick_params(labelsize=18)
-
+    #
     plt.tight_layout()
     plt.savefig(plot_path + f'/reconstructed_image_{name}.jpg' if name else plot_path + '/reconstructed_image.jpg')
     plt.close()

@@ -1,5 +1,5 @@
-base_dir: /gpfs/data/fs71254/schirni/nstack/training/KSO_2023_freq
-meta_state: 'loadme'
+base_dir: /gpfs/data/fs71254/schirni/nstack/training/KSO_2023_nbd+_test
+meta_state: 'none'
 data:
   type: 'KSO'
   data_path: '/gpfs/data/fs71254/schirni/nstack/data/kso_2023_25s.npy'
