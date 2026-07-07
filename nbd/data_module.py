@@ -1,3 +1,4 @@
+import glob
 import multiprocessing as mp
 import os
 
@@ -50,6 +51,13 @@ class NeuralBDDataModule(LightningDataModule):
             self.img_coords = self.train_dataset.image_coordinates
             self.image_mean = self.train_dataset.image_mean
 
+        elif data_set_type.upper() == 'SUIT':
+            self.train_dataset = SUITDataset(**dataset_config, shuffle=True)
+            self.valid_dataset = SUITDataset(**dataset_config, shuffle=False)
+
+            self.img_coords = self.train_dataset.image_coordinates
+            self.image_mean = self.train_dataset.image_mean
+
         else:
             raise ValueError('Unknown data type')
 
@@ -65,7 +73,7 @@ class NeuralBDDataModule(LightningDataModule):
 class MURAMDataset(TensorDataset):
 
     def __init__(self, data_path, n_images, pixel_per_ds, n_modes=44, psf_size=29, coef_range=2, x_crop=300, y_crop=300,
-                 crop_size=512, shuffle=True, batch_size=2048, **kwargs):
+                 crop_size=512, shuffle=True, batch_size=1024, **kwargs):
         # Generate PSFs
         kl_basis = get_KL_basis(n_modes_max=n_modes, size=psf_size)
         kl_wavefront = get_KL_wavefront(kl_basis, n_modes, n_images, coef_range=coef_range)
@@ -85,7 +93,7 @@ class MURAMDataset(TensorDataset):
 
         # Convolve images
         # images = get_convolution(self.high_quality, self.kl_psfs, n_images, noise=False)
-        images = np.load("/glade/work/cschirninger/data/conv_spatially_varying_interp_r0_020_smooth.npy")
+        images = np.load("/gpfs/data/fs71254/schirni/nstack/data/muram_highres_1024_r0_30.npy")
 
         # add noise
 
@@ -121,7 +129,7 @@ class GREGORDataset(TensorDataset):
 
     def __init__(self, data_path, n_images, pixel_per_ds, x_crop=None, y_crop=None, crop_size=None, filter=False,
                  cutoff_freq=None,
-                 shuffle=True, batch_size=1024, **kwargs):
+                 shuffle=True, batch_size=2048, **kwargs):
 
         # Load data
         fits_array = []
@@ -162,15 +170,16 @@ class GREGORDataset(TensorDataset):
                 fits_array_speckle.append(fits.getdata(data_path.split('.')[-2] + '_speckle.fts', i))
             fits_array_speckle = np.stack(fits_array_speckle, -1)
             fits_array_speckle = cutout(fits_array_speckle[:, :, :, None], x_crop, y_crop, crop_size)
-            fits_array_speckle = fits_array_speckle[:, :, 1]
+            fits_array_speckle = fits_array_speckle[:, :, 0]
             self.fits_array_speckle = np.stack([fits_array_speckle, fits_array_speckle], -1)
             # self.fits_array_speckle = fits_array_speckle
         else:
             self.fits_array_speckle = None
 
         # Crop images
-        fits_array = cutout(fits_array[..., None], max_shift, max_shift, crop_size)
-        # fits_array = cutout(fits_array, x_crop, y_crop, crop_size)
+        # fits_array = cutout(fits_array[..., None], max_shift, max_shift, crop_size)
+        # fits_array = cutout(fits_array[..., None], x_crop, y_crop, crop_size)
+        fits_array = fits_array[max_shift:max_shift + crop_size, max_shift:max_shift + crop_size, :]
 
         # Normalize images
         vmin, vmax = fits_array.min(), fits_array.max()
@@ -223,24 +232,25 @@ class DKISTDataset(TensorDataset):
         dkist_array = dkist_array.transpose(1, 2, 0)  # [h, w, n_images]
 
         # apply shift to align images
-        # max_shift = 30
+        max_shift = 300
 
-        # print('Aligning images...')
-        # with mp.Pool(mp.cpu_count()) as pool:
-        #    shifts = list(tqdm(pool.starmap(optimize_shift,
-        #                                    [(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                    y_crop - max_shift:y_crop + crop_size + max_shift, 0],
-        #                                      dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        #                                      y_crop - max_shift:y_crop + crop_size + max_shift, i])
-        #                                     for i in range(n_images)]), total=n_images))
+        print('Aligning images...')
+        with mp.Pool(mp.cpu_count()) as pool:
+           shifts = list(tqdm(pool.starmap(optimize_shift,
+                                           [(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                           y_crop - max_shift:y_crop + crop_size + max_shift, 0],
+                                             dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+                                             y_crop - max_shift:y_crop + crop_size + max_shift, i])
+                                            for i in range(n_images)]), total=n_images))
 
-        # dkist_array = np.stack([shift_image(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
-        # y_crop - max_shift:y_crop + crop_size + max_shift, i],
-        #                                    shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
+        dkist_array = np.stack([shift_image(dkist_array[x_crop - max_shift:x_crop + crop_size + max_shift,
+        y_crop - max_shift:y_crop + crop_size + max_shift, i],
+                                           shifts[i][0][1], shifts[i][0][0]) for i in range(n_images)], -1)
 
         # Crop images
         # dkist_array = cutout(dkist_array[..., None], max_shift, max_shift, crop_size)
-        dkist_array = cutout(dkist_array[..., None], x_crop, y_crop, crop_size)
+        # dkist_array = cutout(dkist_array[..., None], x_crop, y_crop, crop_size)
+        dkist_array = dkist_array[max_shift:max_shift + crop_size, max_shift:max_shift + crop_size, :]
 
         # Normalize images
         vmin, vmax = dkist_array.min(), dkist_array.max()
@@ -303,6 +313,46 @@ class KSODataset(TensorDataset):
 
         # workaround to use the same channel
         # fits_array[..., 1] = fits_array[..., 0]
+        fits_array = np.stack([fits_array, fits_array], -1)
+
+        images = fits_array
+        self.image_mean = images[:, :, 0, :]
+
+        # Create dataset
+        image_coordinates = np.stack(np.mgrid[:images.shape[0], :images.shape[1]], -1)
+        self.image_coordinates = image_coordinates / pixel_per_ds
+
+        # apply binning and cropping
+        coordinates_tensor = torch.from_numpy(self.image_coordinates).float().view(-1, 2)
+        image_tensor = torch.from_numpy(images).float().reshape(-1, n_images, 2)
+
+        if shuffle:
+            r = torch.randperm(len(image_tensor))
+            image_tensor = image_tensor[r]
+            coordinates_tensor = coordinates_tensor[r]
+
+        # split into batches
+        image_tensor = image_tensor.view(-1, batch_size, n_images, 2)
+        coordinates_tensor = coordinates_tensor.view(-1, batch_size, 2)
+
+        super().__init__(image_tensor, coordinates_tensor)
+
+class SUITDataset(TensorDataset):
+    def __init__(self, data_path, n_images, pixel_per_ds,
+                 shuffle=True, batch_size=560, **kwargs):
+
+        # Load data
+        files = sorted(glob.glob(data_path+'/*.fits', recursive=True))
+        fits_array = np.stack([fits.getdata(f) for f in files], -1)
+
+        vmin, vmax = fits_array.min(), fits_array.max()
+        fits_array = (fits_array - vmin) / (vmax - vmin)
+
+        rms = [compute_rms_contrast(fits_array[:, :, i]) for i in range(n_images)]
+        highest_indices = [index for index, value in sorted(enumerate(rms), key=lambda x: x[1], reverse=True)]
+        self.image_contrast = [rms[i] for i in highest_indices]
+        fits_array = np.stack([fits_array[:, :, i] for i in highest_indices], -1)
+
         fits_array = np.stack([fits_array, fits_array], -1)
 
         images = fits_array
