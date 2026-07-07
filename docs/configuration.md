@@ -8,14 +8,14 @@ The primary fields are:
 - `model.psf`: fixed or spatial PSF settings
 - `pretraining`: optional image-model warm start before blind deconvolution
 - `training`: Lightning trainer and learning-rate settings
-- `outputs`: validation arrays and compact diagnostic figures
+- `outputs`: validation arrays and diagnostic figures
 
-## Data windows
+## Data selection
 
 Loaders return the common `(height, width, frames, channels)` representation. The number
 of image channels is inferred from the loaded data, so users do not need to set it in
-`model.image`. Use these
-fields to keep training focused on a smaller working set:
+`model.image`. Use these fields to define the training subset, reproduce preprocessing
+choices, and control memory use:
 
 ```yaml
 data:
@@ -74,7 +74,7 @@ SIREN represents `PSF(x, y, px, py)`. Spatial NeuralBD therefore always uses
 
 ## Progressive training
 
-Progressive training starts with a small PSF support and many training points per batch,
+Progressive training starts with a restricted PSF support and many training points per batch,
 then grows the PSF while reducing the point count and learning rate:
 
 ```yaml
@@ -131,7 +131,8 @@ pretraining:
 
 ## Validation figures
 
-Validation writes compact samples only, defaulting to five examples:
+Validation writes representative samples by default, rather than rendering every frame
+and channel in large bursts:
 
 ```yaml
 outputs:
