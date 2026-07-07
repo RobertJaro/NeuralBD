@@ -4,6 +4,7 @@ Run tests:
 
 ```bash
 conda run -n nf2 python -m pytest
+conda run -n nf2 ruff check src/nbd tests examples docs/conf.py
 ```
 
 Build docs:
