@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from neuralbd.models.siren import SirenModel
@@ -48,31 +47,24 @@ class FixedPSFModel(nn.Module):
             n_channels=n_channels if channel_mode == "per_channel" else None,
         )
         self.log_psfs = nn.Parameter(initial_psf.clamp_min(1e-8).log())
+        self.psf_size = tuple(int(size) for size in psf_size)
+        self.active_psf_size = self.psf_size
 
     def resize(self, psf_size):
-        psf_size = tuple(psf_size)
-        with torch.no_grad():
-            psf = torch.exp(self.log_psfs).detach()
-            if psf.ndim == 3:
-                resized = F.interpolate(
-                    psf.permute(2, 0, 1)[:, None, ...],
-                    size=psf_size,
-                    mode="bilinear",
-                    align_corners=False,
-                )[:, 0].permute(1, 2, 0)
-            else:
-                n_x, n_y, n_frames, n_channels = psf.shape
-                resized = F.interpolate(
-                    psf.permute(2, 3, 0, 1).reshape(n_frames * n_channels, 1, n_x, n_y),
-                    size=psf_size,
-                    mode="bilinear",
-                    align_corners=False,
-                ).reshape(n_frames, n_channels, *psf_size).permute(2, 3, 0, 1)
-            resized = normalize_psf(resized).clamp_min(1e-8).log()
-        self.log_psfs = nn.Parameter(resized.to(device=self.log_psfs.device, dtype=self.log_psfs.dtype))
+        psf_size = tuple(int(size) for size in psf_size)
+        if psf_size[0] > self.psf_size[0] or psf_size[1] > self.psf_size[1]:
+            raise ValueError("Active PSF size cannot exceed the learned parameter support")
+        self.active_psf_size = psf_size
+
+    def _active_log_psfs(self):
+        if self.active_psf_size == self.psf_size:
+            return self.log_psfs
+        x0 = (self.psf_size[0] - self.active_psf_size[0]) // 2
+        y0 = (self.psf_size[1] - self.active_psf_size[1]) // 2
+        return self.log_psfs[x0:x0 + self.active_psf_size[0], y0:y0 + self.active_psf_size[1], ...]
 
     def forward(self, coords=None, psf_coords=None, area_elements=None):
-        psf = torch.exp(self.log_psfs)
+        psf = torch.exp(self._active_log_psfs())
         psf = normalize_psf(psf, area_elements)
         if coords is None:
             return psf
@@ -85,10 +77,10 @@ class FixedPSFModel(nn.Module):
         return psf[None, ...].expand(coords.shape[0], -1, -1, -1)
 
 
-class SirenPSFModel(nn.Module):
+class ContinuousPSFModel(nn.Module):
     supports_sample_permutation = True
 
-    def __init__(self, n_frames, n_channels=1, channel_mode="shared", dim=128, n_layers=4, w0=1.0, w0_init=5.0):
+    def __init__(self, n_frames, n_channels=1, channel_mode="shared", dim=128, n_layers=4, w0=1.0, w0_init=30.0):
         super().__init__()
         if channel_mode not in {"shared", "per_channel"}:
             raise ValueError("channel_mode must be 'shared' or 'per_channel'")
@@ -121,7 +113,7 @@ class SirenPSFModel(nn.Module):
         return normalize_psf(psf, area_elements)
 
 
-class SpatialPSFModel(SirenPSFModel):
+class SpatialPSFModel(ContinuousPSFModel):
     supports_sample_permutation = True
 
     def __init__(self, n_frames, n_channels=1, channel_mode="shared", dim=128, n_layers=4, w0=1.0, w0_init=5.0):

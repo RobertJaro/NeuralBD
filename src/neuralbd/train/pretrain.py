@@ -39,6 +39,7 @@ def pretrain_image_model(module, datamodule, config):
             optimizer.step()
             running_loss += float(loss.detach().cpu())
             n_batches += 1
+            del loss, pred, target, images, coords
         history.append(running_loss / max(n_batches, 1))
     return history
 
@@ -68,7 +69,7 @@ class ImagePretrainingModule(LightningModule):
         )
         pred = self.image_model(coords)
         loss = torch.mean((pred - target) ** 2)
-        self.log("pretrain.loss", loss, prog_bar=True)
+        self.log("pretrain.loss", loss.detach(), prog_bar=True)
         return loss
 
     def configure_optimizers(self):

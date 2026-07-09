@@ -69,6 +69,7 @@ Standard NeuralBD can use direct learnable PSF parameters:
 ```yaml
 model:
   psf:
+    type: default
     representation: parameters
     size: 65
     channel_mode: shared
@@ -79,6 +80,7 @@ or a continuous SIREN representation:
 ```yaml
 model:
   psf:
+    type: default
     representation: siren
     size: 65
     channel_mode: per_channel
@@ -88,11 +90,36 @@ model:
 `channel_mode: shared` learns one PSF per frame and applies it to all channels.
 `channel_mode: per_channel` learns a separate PSF per frame and channel.
 
-## 5. Optional pretraining
+## 5. Progressive warm start
 
-Pretraining fits the image SIREN before optimizing the full blind deconvolution model.
-This gives the reconstruction a stable initialization and keeps the PSF fixed during the
-warm start.
+Progressive training can replace a separate image pretraining stage by starting with a
+`1x1` PSF. The first stage behaves like an identity observation model, then later stages
+grow by one pixel on each side every 100 epochs while reducing the point count and learning
+rate. The generated schedule follows `1x1`, `3x3`, `5x5`, and so on, while keeping the
+approximate sample budget `sampling_points * psf_area` constant:
+
+```yaml
+training:
+  progressive:
+    enabled: true
+    start_psf_size: 1
+    increase_every_n_epochs: 100
+    sampling_points: 16384
+    fixed_epoch_size: true
+    epoch_iterations: 1000
+    learning_rate_start: 3.0e-4
+    learning_rate_end: 3.0e-5
+```
+
+This schedule is especially useful when the target PSF support is large. The fixed epoch
+size keeps 1000 batches per epoch even though the number of sampled points per batch changes
+across stages. Once the full PSF is reached, the remaining epochs continue at the final PSF
+size.
+
+## 6. Optional pretraining
+
+Pretraining is still available if you want to fit the image SIREN to a specific reference
+target before blind deconvolution:
 
 ```yaml
 pretraining:
@@ -104,31 +131,12 @@ pretraining:
 
 Available targets are `first_frame`, `frame`, and `mean`.
 
-## 6. Progressive training
-
-Progressive training starts with a restricted PSF support and many training points per batch,
-then grows the PSF while reducing the point count and learning rate:
-
-```yaml
-training:
-  progressive:
-    enabled: true
-    start_psf_size: 3
-    target_psf_size: 65
-    n_stages: 6
-    training_points_start: 8192
-    training_points_end: 1024
-    learning_rate_start: 3.0e-4
-    learning_rate_end: 3.0e-5
-```
-
-This schedule is especially useful when the target PSF support is large.
-
 ## 7. Validate and export
 
-Validation writes sampled diagnostic figures and optional NumPy arrays. The default
-figures include learned PSFs, input versus reconstruction, predicted observations versus
-reference observations, and optional comparison with a ground-truth reconstruction.
+Validation runs every 10 epochs by default and writes sampled diagnostic figures and
+optional NumPy arrays. The default figures include learned PSFs, input versus reconstruction,
+predicted observations versus reference observations, and optional comparison with a
+ground-truth reconstruction.
 
 After training, export the latent image with:
 

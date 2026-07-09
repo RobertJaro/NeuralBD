@@ -26,6 +26,9 @@ class NeuralBDOutput:
                 module.psf_model.load_state_dict(model_state["psf"])
             else:
                 module.load_state_dict(model_state)
+            active_psf_size = self.metadata.get("active_psf_size") or self.metadata.get("psf_size")
+            if active_psf_size is not None:
+                module.set_psf_size(active_psf_size)
             return module.to(self.device).eval()
 
         module = torch.nn.Module()

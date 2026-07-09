@@ -45,3 +45,24 @@ Typical preprocessing before NeuralBD training includes:
 - normalization to a positive numeric range
 
 NeuralBD keeps these steps explicit in the configuration so workflows remain reproducible.
+
+## GREGOR/HIFI
+
+Use `nbd-prepare-gregor` for GREGOR/HIFI `.fits` or `.fts` bursts. The command only
+writes a processed channels-last `.npz` file with two keys: `images` and `metadata`.
+
+```bash
+nbd-prepare-gregor \
+  --input /glade/work/cschirninger/data/hifi_20220602_095015_sd.fts \
+  --output /glade/derecho/scratch/rjarolim/neuralbd/work/gregor_hifi/data/processed_burst.npz
+```
+
+Then create or edit a normal NeuralBD YAML config that points to the processed data and
+train with:
+
+```bash
+nbd-train --config examples/configs/gregor_hifi.yaml
+```
+
+See the GREGOR/HIFI workflow page for layout options, smoke-test settings, spatial PSF
+configuration, and export commands.

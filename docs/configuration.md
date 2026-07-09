@@ -2,13 +2,20 @@
 
 The primary fields are:
 
+- `base_dir`: checkpoint location
+- `work_dir`: local working files such as W&B runs and prepared data
 - `method`: `standard` or `spatial`
 - `data`: burst location, normalization, batch size, and coordinate scaling
 - `model.image`: SIREN image model settings
-- `model.psf`: fixed or spatial PSF settings
+- `model.psf`: default or spatial PSF settings
 - `pretraining`: optional image-model warm start before blind deconvolution
 - `training`: Lightning trainer and learning-rate settings
-- `outputs`: validation arrays and diagnostic figures
+- `logging`: Weights & Biases experiment logging
+- `outputs`: validation diagnostic figures
+
+If `work_dir` is omitted, it defaults to `base_dir` for backward compatibility.
+Training datasets are kept in memory; `work_dir` is used for W&B files and explicitly
+prepared data from workflows.
 
 ## Data selection
 
@@ -31,6 +38,10 @@ data:
 
 `subframe` also accepts `x_range: [start, stop]` and `y_range: [start, stop]`.
 
+Model coordinates are centered on the image: `(0, 0)` is the image center, positive
+`x` points right, and positive `y` points up. `pixel_per_ds` scales these centered
+pixel coordinates before they are passed to the SIREN models.
+
 ## PSF channels
 
 The default PSF is shared across all image channels:
@@ -38,6 +49,7 @@ The default PSF is shared across all image channels:
 ```yaml
 model:
   psf:
+    type: default
     representation: parameters
     channel_mode: shared
 ```
@@ -58,40 +70,60 @@ field:
 ```yaml
 model:
   psf:
+    type: default
     representation: parameters
+    target_size: 65
 ```
 
 ```yaml
 model:
   psf:
+    type: default
     representation: siren
     permute_samples: true
 ```
 
-For the standard method, the SIREN represents `PSF(px, py)`. For the spatial method, the
+For `type: default`, the SIREN represents `PSF(px, py)`. For `type: spatial`, the
 SIREN represents `PSF(x, y, px, py)`. Spatial NeuralBD therefore always uses
-`representation: siren`.
+`type: spatial` and `representation: siren`.
+
+`target_size` defines the full learned PSF support. Progressive training may start from a
+smaller active support and grow toward this target without changing the underlying model
+parameters during distributed training.
 
 ## Progressive training
 
-Progressive training starts with a restricted PSF support and many training points per batch,
-then grows the PSF while reducing the point count and learning rate:
+Progressive training starts from a small active PSF support, typically `1x1`, and many
+training points per batch. This first stage behaves like an identity observation model, giving
+the image model a stable warm start without a separate pretraining phase. Later stages increase
+the PSF size by one pixel on each side every `increase_every_n_epochs` epochs, reduce the
+sampling points per batch, and keep training with the final PSF after the full support is reached.
+Generated growth steps keep the approximate sample budget constant:
+
+```text
+sampling_points * psf_width * psf_height
+```
 
 ```yaml
 training:
   progressive:
     enabled: true
-    start_psf_size: 3
-    target_psf_size: 65
-    n_stages: 6
-    training_points_start: 8192
-    training_points_end: 1024
+    start_psf_size: 1
+    increase_every_n_epochs: 100
+    sampling_points: 16384
+    fixed_epoch_size: true
+    epoch_iterations: 1000
     learning_rate_start: 3.0e-4
     learning_rate_end: 3.0e-5
 ```
 
-The generated stages use odd PSF sizes between `start_psf_size` and `target_psf_size`.
-For full control, define explicit stages:
+The generated growth uses odd PSF sizes between `start_psf_size` and the target PSF support,
+for example `1x1`, `3x3`, `5x5`, and so on. Each growth step adds one pixel on every side.
+If `model.psf.target_size: 65`, a `1x1` stage with `16384` sampling points ends near `4`
+sampling points at `65x65`.
+With `fixed_epoch_size: true` and `epoch_iterations: 1000`, progressive training keeps each
+epoch at 1000 batches even as `sampling_points` changes.
+For full manual control, define explicit stages:
 
 ```yaml
 training:
@@ -112,11 +144,13 @@ training:
         learning_rate: 3.0e-5
 ```
 
-## Pretraining
+## Optional pretraining
 
 Pretraining fits the image SIREN to one reference target before the full NeuralBD
 optimization starts. This gives the latent reconstruction a stable initialization while
-keeping the PSF untouched.
+keeping the PSF untouched. Prefer `1x1` progressive PSF growth for most runs; use this
+separate pretraining stage when you want to fit a specific reference target before blind
+deconvolution.
 
 ```yaml
 pretraining:
@@ -129,19 +163,73 @@ pretraining:
 
 `target` can be `first_frame`, `frame`, or `mean`.
 
+## Learned frame shifts
+
+Frame-shift learning is disabled by default. Enable it when observed frames have relative
+translations that should be modeled separately from the centered PSF:
+
+```yaml
+model:
+  registration:
+    enabled: true
+    sample_frames: true
+    anchor: first_frame
+    max_pixels: 5
+    regularization: 1.0e-4
+```
+
+With `sample_frames: true`, training samples one frame per coordinate and optimizes only
+that frame's PSF and shift for the sampled point. This avoids evaluating every frame for
+every coordinate in large bursts. Validation still evaluates the full frame stack.
+
+## Weights & Biases logging
+
+Install the visualization extra to log scalar training metrics, learning-rate values, and
+sampled validation figures to the `NeuralBD` project. W&B logging is enabled by default:
+
+```bash
+pip install -e ".[viz]"
+```
+
+```yaml
+logging:
+  wandb: true
+  project: NeuralBD
+  name: neuralbd
+```
+
+Local W&B files are written to `work_dir/wandb`.
+
 ## Validation figures
 
-Validation writes representative samples by default, rather than rendering every frame
-and channel in large bursts:
+Validation runs every 10 epochs by default. Override the interval under `training`:
+
+```yaml
+training:
+  validation_every_n_epochs: 10
+```
+
+Validation logs representative figures to W&B by default, rather than rendering every
+frame and channel in large bursts:
 
 ```yaml
 outputs:
-  save_validation_arrays: true
-  save_validation_figures: true
   sample_count: 5
+  figure_subregion_size: 512
+  figure_subregion: null
   reference_path: null
   reference_array_key: null
 ```
 
 Figures include learned PSFs, input versus latent reconstruction, convolved prediction
-versus observed reference, and optional reconstruction versus ground truth.
+versus observed reference, and optional reconstruction versus ground truth. Image
+figures use a centered `figure_subregion_size` crop for logging speed; set it to
+`null` to render the full validation frame. To log an explicit centered pixel-coordinate
+window, use:
+
+```yaml
+outputs:
+  figure_subregion:
+    x: [100, 200]
+    y: [300, 400]
+```

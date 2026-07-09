@@ -38,7 +38,7 @@ class SirenLayer(nn.Module):
 
 
 class SirenModel(nn.Module):
-    def __init__(self, in_dim=2, out_dim=1, dim=256, n_layers=8, w0=1.0, w0_init=5.0, **kwargs):
+    def __init__(self, in_dim=2, out_dim=1, dim=256, n_layers=8, w0=1.0, w0_init=30.0, **kwargs):
         super().__init__()
         if n_layers < 1:
             raise ValueError("n_layers must be at least 1")

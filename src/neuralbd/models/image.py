@@ -4,14 +4,14 @@ from torch import nn
 from neuralbd.models.siren import SirenModel
 
 
-class ImageSirenModel(nn.Module):
+class ImageModel(nn.Module):
     def __init__(
         self,
         n_channels=1,
         dim=256,
         n_layers=8,
         w0=1.0,
-        w0_init=5.0,
+        w0_init=30.0,
         output_activation="softplus",
         eps=1e-6,
         **kwargs,

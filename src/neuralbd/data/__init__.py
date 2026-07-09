@@ -1,4 +1,4 @@
-from neuralbd.data.base import BurstDataModule, BurstDataset, ensure_burst_shape
+from neuralbd.data.base import BurstDataModule, BurstDataset, BurstPointDataset, ensure_burst_shape
 from neuralbd.data.loaders import (
     load_burst_from_config,
     load_dkist_burst,
@@ -9,11 +9,13 @@ from neuralbd.data.loaders import (
     load_numpy_burst,
     select_channels,
     select_frames,
+    to_channels_last,
 )
 
 __all__ = [
     "BurstDataModule",
     "BurstDataset",
+    "BurstPointDataset",
     "ensure_burst_shape",
     "load_burst_from_config",
     "load_dkist_burst",
@@ -24,4 +26,5 @@ __all__ = [
     "load_numpy_burst",
     "select_channels",
     "select_frames",
+    "to_channels_last",
 ]

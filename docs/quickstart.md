@@ -23,8 +23,10 @@ Train the standard method on the generated burst:
 nbd-train --config examples/configs/standard_numpy.yaml
 ```
 
-The run writes checkpoints, validation arrays, and sampled validation figures under the
-configured `base_dir`.
+The run writes checkpoints under `base_dir`; W&B files are written under `work_dir`.
+Training datasets stay in memory.
+The example config also logs training metrics and sampled validation figures to the
+`NeuralBD` project in Weights & Biases when the `viz` extra is installed.
 
 ## Export the reconstruction
 

@@ -24,6 +24,7 @@ method: spatial
 
 model:
   psf:
+    type: spatial
     representation: siren
     size: 65
     dim: 128

@@ -3,7 +3,7 @@ import torch.distributed as dist
 from lightning.pytorch import LightningModule
 from torch.optim.lr_scheduler import ExponentialLR
 
-from neuralbd.models import FixedPSFModel, ImageSirenModel, NeuralBDConvolution, SirenPSFModel, SpatialPSFModel
+from neuralbd.models import ContinuousPSFModel, FixedPSFModel, ImageModel, NeuralBDConvolution, SpatialPSFModel
 
 
 class NeuralBDModule(LightningModule):
@@ -14,6 +14,7 @@ class NeuralBDModule(LightningModule):
         pixel_per_ds=1.0,
         image_config=None,
         psf_config=None,
+        registration_config=None,
         lr_config=None,
         validation_mapping=None,
     ):
@@ -25,6 +26,7 @@ class NeuralBDModule(LightningModule):
         self.n_channels = self.images_shape[3] if len(self.images_shape) == 4 else 1
         self.pixel_per_ds = pixel_per_ds
         self.lr_config = lr_config or {"start": 1e-4, "end": 1e-4, "iterations": 100000}
+        self.registration_config = registration_config or {"enabled": False}
 
         image_config = dict(image_config or {})
         image_config.pop("type", None)
@@ -36,15 +38,20 @@ class NeuralBDModule(LightningModule):
                 f"model.image.n_channels={image_channels} does not match data channels={self.n_channels}"
             )
         psf_config = dict(psf_config or {})
-        psf_type = psf_config.pop("type", "fixed")
+        psf_type = psf_config.pop("type", "default")
+        if psf_type == "fixed":
+            psf_type = "default"
         representation = psf_config.pop("representation", "parameters")
         psf_size = tuple(psf_config.pop("size", (29, 29)))
+        sampling = psf_config.pop("sampling", "cartesian")
+        if sampling != "cartesian":
+            raise ValueError("model.psf.sampling must be 'cartesian'")
         jitter = bool(psf_config.pop("jitter", False))
         permute_psf_samples = bool(psf_config.pop("permute_samples", False))
         channel_mode = psf_config.pop("channel_mode", "shared")
 
-        self.image_model = ImageSirenModel(**image_config)
-        if psf_type == "fixed" and representation == "parameters":
+        self.image_model = ImageModel(**image_config)
+        if psf_type == "default" and representation == "parameters":
             for key in ("dim", "n_layers", "w0", "w0_init"):
                 psf_config.pop(key, None)
             self.psf_model = FixedPSFModel(
@@ -54,9 +61,9 @@ class NeuralBDModule(LightningModule):
                 psf_size=psf_size,
                 **psf_config,
             )
-        elif psf_type == "fixed" and representation == "siren":
+        elif psf_type == "default" and representation == "siren":
             psf_config.pop("sigma", None)
-            self.psf_model = SirenPSFModel(
+            self.psf_model = ContinuousPSFModel(
                 n_frames=self.n_frames,
                 n_channels=self.n_channels,
                 channel_mode=channel_mode,
@@ -82,6 +89,10 @@ class NeuralBDModule(LightningModule):
             pixel_per_ds=pixel_per_ds,
             jitter=jitter,
             permute_psf_samples=permute_psf_samples,
+            frame_shift_enabled=self.registration_config.get("enabled", False),
+            n_frames=self.n_frames,
+            max_frame_shift_pixels=self.registration_config.get("max_pixels"),
+            frame_shift_anchor=self.registration_config.get("anchor", "first_frame"),
         )
         self.validation_batches = {}
         self.validation_outputs = {}
@@ -95,12 +106,13 @@ class NeuralBDModule(LightningModule):
             pixel_per_ds=config["data"]["pixel_per_ds"],
             image_config=config["model"]["image"],
             psf_config=config["model"]["psf"],
+            registration_config=config["model"].get("registration"),
             lr_config=config["training"]["learning_rate"],
             validation_mapping=config.get("validation_mapping"),
         )
 
-    def forward(self, coords):
-        return self.convolution(coords)
+    def forward(self, coords, frame_indices=None):
+        return self.convolution(coords, frame_indices=frame_indices)
 
     def set_psf_size(self, psf_size):
         if isinstance(psf_size, int):
@@ -113,17 +125,39 @@ class NeuralBDModule(LightningModule):
     @staticmethod
     def _unpack_batch(batch):
         if isinstance(batch, dict):
-            return batch["images"], batch["coords"], batch.get("indices")
+            return (
+                batch["images"],
+                batch["coords"],
+                batch.get("indices"),
+                batch.get("frame_indices"),
+                batch.get("dataset_idx"),
+            )
         if len(batch) == 3:
-            return batch
+            images, coords, indices = batch
+            return images, coords, indices, None, None
         images, coords = batch
-        return images, coords, None
+        return images, coords, None, None, None
+
+    def _shift_regularization_loss(self):
+        weight = float(self.registration_config.get("regularization", 0.0))
+        if not self.registration_config.get("enabled", False) or weight <= 0:
+            return None
+        shifts_pixels = self.convolution.frame_shifts() * float(self.pixel_per_ds)
+        return weight * torch.mean(shifts_pixels.pow(2))
 
     def training_step(self, batch, batch_idx):
-        images, coords, _indices = self._unpack_batch(batch)
-        pred = self(coords)
+        images, coords, _indices, frame_indices, _dataset_idx = self._unpack_batch(batch)
+        pred = self(coords, frame_indices=frame_indices)
         loss = torch.mean((pred - images) ** 2)
-        self.log("train.loss", loss, prog_bar=True)
+        shift_loss = self._shift_regularization_loss()
+        if shift_loss is not None:
+            loss = loss + shift_loss
+            self.log("train.registration_shift_loss", shift_loss.detach())
+            shift_rms = torch.sqrt(
+                torch.mean((self.convolution.frame_shifts() * float(self.pixel_per_ds)).pow(2))
+            )
+            self.log("train.registration_shift_rms_pixels", shift_rms.detach())
+        self.log("train.loss", loss.detach(), prog_bar=True)
         return loss
 
     def configure_optimizers(self):
@@ -145,8 +179,8 @@ class NeuralBDModule(LightningModule):
         self.validation_outputs = {}
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        images, coords, indices = self._unpack_batch(batch)
-        pred = self(coords)
+        images, coords, indices, frame_indices, dataset_idx = self._unpack_batch(batch)
+        pred = self(coords, frame_indices=frame_indices)
         image_pred = self.image_model(coords)
         loss = torch.mean((pred - images) ** 2)
         output = {
@@ -159,12 +193,14 @@ class NeuralBDModule(LightningModule):
         }
         if indices is not None:
             output["indices"] = indices.detach()
-            output["dataset_idx"] = indices[:1].detach()
-        return output
+            output["dataset_idx"] = dataset_idx.detach() if dataset_idx is not None else indices[:1].detach()
+        self._store_validation_output(output, dataloader_idx)
+        return loss.detach()
 
     def on_validation_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
-        if outputs is None:
-            return
+        return
+
+    def _store_validation_output(self, outputs, dataloader_idx=0):
         cpu_out = {key: value.detach().cpu() for key, value in outputs.items()}
         self.validation_batches.setdefault(dataloader_idx, []).append(cpu_out)
 
@@ -186,8 +222,17 @@ class NeuralBDModule(LightningModule):
                 outputs_by_loader = merged
             else:
                 dist.gather_object(outputs_by_loader, None, dst=0)
+                self.validation_batches = {}
                 return
 
+        self.validation_outputs = self.merge_validation_batches(outputs_by_loader)
+        self.validation_batches = {}
+        for ds_name, merged in self.validation_outputs.items():
+            self.log(f"val.{ds_name}.loss", merged["loss"].mean(), prog_bar=True)
+
+    def merge_validation_batches(self, outputs_by_loader=None):
+        outputs_by_loader = self.validation_batches if outputs_by_loader is None else outputs_by_loader
+        merged_by_name = {}
         metadata_keys = {"images_shape"}
         for loader_idx, outputs in outputs_by_loader.items():
             outputs = self._sort_validation_outputs(outputs)
@@ -200,13 +245,13 @@ class NeuralBDModule(LightningModule):
                     merged[key] = torch.cat([out[key] for out in outputs], dim=0)
             merged.pop("dataset_idx", None)
             ds_name = self.validation_mapping.get(loader_idx, loader_idx)
-            self.validation_outputs[ds_name] = merged
-            self.log(f"val.{ds_name}.loss", merged["loss"].mean(), prog_bar=True)
+            merged_by_name[ds_name] = merged
+        return merged_by_name
 
     @staticmethod
     def _sort_validation_outputs(outputs):
         indexed = []
-        seen = set()
+        seen_indices = {}
         for idx, output in enumerate(outputs):
             dataset_idx = output.get("dataset_idx")
             if dataset_idx is None:
@@ -215,8 +260,12 @@ class NeuralBDModule(LightningModule):
             if dataset_idx.ndim > 0:
                 dataset_idx = dataset_idx.reshape(-1)[0]
             dataset_idx = int(dataset_idx)
-            if dataset_idx in seen:
-                continue
-            seen.add(dataset_idx)
+            previous = seen_indices.get(dataset_idx)
+            if previous is not None:
+                prev_indices = outputs[previous].get("indices")
+                curr_indices = output.get("indices")
+                if prev_indices is not None and curr_indices is not None and torch.equal(prev_indices, curr_indices):
+                    continue
+            seen_indices[dataset_idx] = idx
             indexed.append((dataset_idx, idx))
         return [outputs[idx] for _dataset_idx, idx in sorted(indexed, key=lambda item: item[0])]

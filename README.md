@@ -33,13 +33,22 @@ nbd-reconstruct --checkpoint runs/standard_numpy/neuralbd.nbd --out reconstructi
 
 The example generates a synthetic burst, trains a standard NeuralBD model, saves validation diagnostics, and exports the learned latent reconstruction.
 
+For GREGOR/HIFI `.fts` data, prepare the burst, then train with a YAML config:
+
+```bash
+nbd-prepare-gregor \
+  --input /glade/work/cschirninger/data/hifi_20220602_095015_sd.fts \
+  --output /glade/work/rjarolim/neuralbd/data/gregor_hifi/processed_burst.npz
+nbd-train --config examples/configs/gregor_hifi.yaml
+```
+
 ## Workflow
 
 1. Prepare a burst as `(height, width, frames)` or `(height, width, frames, channels)`.
 2. Select frames, channels, and optional subframes in the YAML configuration.
 3. Choose `method: standard` or `method: spatial`.
 4. Configure the PSF representation: direct learned parameters or SIREN-based PSFs.
-5. Optionally enable image pretraining and progressive PSF growth.
+5. Enable progressive PSF growth, starting from a `1x1` PSF for a stable warm start.
 6. Train with `nbd-train`.
 7. Inspect validation figures and export the reconstruction with `nbd-reconstruct`.
 

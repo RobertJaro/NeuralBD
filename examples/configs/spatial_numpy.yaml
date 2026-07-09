@@ -1,4 +1,5 @@
 base_dir: runs/spatial_numpy
+work_dir: runs/spatial_numpy/work
 method: spatial
 
 data:
@@ -6,42 +7,23 @@ data:
   path: examples/data/synthetic_burst.npy
   n_images: 4
   pixel_per_ds: 32.0
-  batch_size: 128
-  normalization: minmax
-  subframe: null
 
 model:
   image:
-    type: siren
     dim: 64
     n_layers: 3
   psf:
-    representation: siren
-    size: 9
+    target_size: 9
     dim: 32
     n_layers: 3
-    channel_mode: shared
     permute_samples: true
-
-pretraining:
-  enabled: false
-  epochs: 0
-  target: first_frame
 
 training:
   epochs: 10
-  check_val_every_n_epoch: 1
+  validation_every_n_epochs: 1
   checkpoint_every_n_epochs: 5
   progressive:
-    enabled: false
-    start_psf_size: 3
-    target_psf_size: 9
-    n_stages: 3
-    training_points_start: 512
-    training_points_end: 128
-    learning_rate_start: 3.0e-4
-    learning_rate_end: 1.0e-4
+    sampling_points: 128
 
 outputs:
   sample_count: 5
-  save_validation_figures: true

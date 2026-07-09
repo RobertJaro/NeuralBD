@@ -1,0 +1,40 @@
+base_dir: /glade/work/rjarolim/neuralbd/runs/gregor_hifi_v02
+work_dir: /glade/derecho/scratch/rjarolim/neuralbd/work/gregor_hifi_v02
+method: standard
+
+data:
+  type: npz
+  path: /glade/work/rjarolim/neuralbd/data/gregor_hifi/processed_burst.npz
+  pixel_per_ds: 64.0
+  channels: [0]
+
+model:
+  psf:
+    target_size: 41
+#  registration:
+#    enabled: true
+#    sample_frames: true
+#    anchor: first_frame
+#    max_pixels: 5
+#    regularization: 1.0e-4
+
+training:
+  epochs: 10000
+  validation_every_n_epochs: 10
+  learning_rate:
+    start: 1.0e-3
+    end: 1.0e-3
+  progressive:
+    enabled: true
+    start_psf_size: 1
+    increase_every_n_epochs: 1
+    sampling_points: 524288
+    validation_sampling_points: 16384
+    fixed_epoch_size: true
+    epoch_iterations: 1000
+
+outputs:
+  sample_count: 5
+#  figure_subregion:
+#    x: [-100, 100]
+#    y: [-100, 100]

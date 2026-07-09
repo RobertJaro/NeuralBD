@@ -23,6 +23,7 @@ configuration
 methods/standard
 methods/spatial
 data/overview
+data/gregor_hifi
 api/models
 api/train
 api/data
